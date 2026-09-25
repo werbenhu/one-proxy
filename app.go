@@ -21,6 +21,8 @@ import (
 	"github.com/werbenhu/one-proxy/internal/config"
 	"github.com/werbenhu/one-proxy/internal/provider"
 	"github.com/werbenhu/one-proxy/internal/proxy"
+	"github.com/werbenhu/one-proxy/internal/service"
+	"github.com/werbenhu/one-proxy/internal/usage"
 )
 
 //go:embed all:frontend/dist
@@ -35,6 +37,7 @@ type App struct {
 	store         *config.Store
 	registry      *provider.Registry
 	server        *proxy.Server
+	svc           *service.Service
 	configWarning string
 	quitting      atomic.Bool
 }
@@ -61,7 +64,8 @@ func NewApp() (*App, error) {
 		// 用量记账失败不阻塞启动（可无记账运行）
 		_ = server.AttachUsage(dbPath, "api")
 	}
-	return &App{store: store, registry: registry, server: server, configWarning: configWarning}, nil
+	svc := service.New(store, registry, server)
+	return &App{store: store, registry: registry, server: server, svc: svc, configWarning: configWarning}, nil
 }
 
 // rebuildAdapters 按当前配置重建渠道适配器（配置变更后调用）。
@@ -166,8 +170,33 @@ func (a *App) initSystray() {
 
 func (a *App) shutdown(ctx context.Context) { _ = a.server.Close() }
 
-// Ping 前端连通性检查（M6 前的最小绑定）。
-func (a *App) Ping() string { return "pong" }
+// ===== Wails bindings（前端调用）=====
+
+func (a *App) GetChannels() []service.ChannelView { return a.svc.Channels() }
+
+func (a *App) SaveChannel(ch config.Channel) error { return a.svc.SaveChannel(ch) }
+
+func (a *App) DeleteChannel(id string) error { return a.svc.DeleteChannel(id) }
+
+func (a *App) GetPresets() []service.PresetView { return service.Presets() }
+
+func (a *App) GetSettings() service.SettingsView { return a.svc.Settings() }
+
+func (a *App) SaveSettings(v service.SettingsView) error { return a.svc.SaveSettings(v) }
+
+func (a *App) GetUsageSummary(rangeKey string) ([]usage.AggRow, error) {
+	return a.svc.UsageSummary(rangeKey)
+}
+
+func (a *App) TestChannel(id string) error { return a.svc.TestChannel(id) }
+
+func (a *App) StartGrokDeviceAuth(id string) (provider.DeviceAuthInfo, error) {
+	return a.svc.StartGrokDeviceAuth(id)
+}
+
+func (a *App) CompleteGrokDeviceAuth(id, deviceCode string) error {
+	return a.svc.CompleteGrokDeviceAuth(id, deviceCode)
+}
 
 func wailsRun() error {
 	app, err := NewApp()
@@ -200,11 +229,21 @@ func main() {
 }
 
 func runCLI() {
-	srv, err := proxy.NewDefaultServer()
+	path, err := config.DefaultPath("config.json")
 	if err != nil {
 		log.Fatal(err)
 	}
-	cfg, _ := config.DefaultPath("config.json")
-	log.Printf("one-proxy 监听中（配置 %s）", cfg)
+	store := config.NewStore(path)
+	if _, err := store.Load(); err != nil {
+		log.Fatalf("配置无效（%s）: %v", path, err)
+	}
+	registry := provider.NewRegistry()
+	bindExtraAccess(store)
+	rebuildAdapters(store.Get(), registry)
+	srv := proxy.NewServer(store, registry)
+	if dbPath, err := config.DefaultPath("usage.db"); err == nil {
+		_ = srv.AttachUsage(dbPath, "api")
+	}
+	log.Printf("one-proxy 监听中（配置 %s）", path)
 	log.Fatal(srv.ListenAndServe())
 }

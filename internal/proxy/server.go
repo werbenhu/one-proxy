@@ -84,19 +84,6 @@ func (s *Server) CloseUsage() {
 	}
 }
 
-// NewDefaultServer 读取默认路径配置并构造服务器（CLI 骨架用）。
-func NewDefaultServer() (*Server, error) {
-	path, err := config.DefaultPath("config.json")
-	if err != nil {
-		return nil, err
-	}
-	store := config.NewStore(path)
-	if _, err := store.Load(); err != nil {
-		return nil, err
-	}
-	return NewServer(store, provider.NewRegistry()), nil
-}
-
 func (s *Server) Handler() http.Handler { return s.mux }
 
 func (s *Server) ListenAndServe() error {

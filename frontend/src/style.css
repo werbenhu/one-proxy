@@ -1,0 +1,99 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0f0f;
+  --panel: #141b1b;
+  --border: #243131;
+  --text: #d8e4e4;
+  --muted: #7a8f8f;
+  --accent: #35c9a0;
+  --warn: #e0b341;
+  --danger: #e06c5f;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+.shell { display: flex; height: 100vh; }
+
+.nav {
+  width: 160px;
+  padding: 16px 12px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.brand { font-weight: 700; font-size: 16px; margin-bottom: 16px; color: var(--accent); }
+
+.nav a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+.nav a.router-link-active { color: var(--text); background: var(--border); }
+
+.main { flex: 1; overflow: auto; padding: 20px 24px; }
+
+h2 { margin: 0 0 16px; font-size: 17px; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; }
+
+button {
+  background: var(--border);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #06251c; font-weight: 600; }
+button.danger { color: var(--danger); }
+
+input, select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  width: 100%;
+}
+
+.field { margin-bottom: 12px; }
+.field label { display: block; color: var(--muted); margin-bottom: 4px; font-size: 13px; }
+
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+.badge.ok { background: #10352a; color: var(--accent); }
+.badge.cooling { background: #3a3013; color: var(--warn); }
+.badge.auth-failed { background: #3a1a16; color: var(--danger); }
+.badge.disabled { background: var(--border); color: var(--muted); }
+
+.row { display: flex; gap: 12px; }
+.row > * { flex: 1; }
+
+.actions { display: flex; gap: 8px; margin-bottom: 16px; }
+
+.modal-mask {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  padding: 20px; width: 520px; max-height: 80vh; overflow: auto;
+}
+.modal h3 { margin: 0 0 16px; }
+
+.muted { color: var(--muted); }
+.error-text { color: var(--danger); margin-top: 8px; }
