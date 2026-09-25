@@ -53,6 +53,7 @@ func (s *Server) AttachUsage(dbPath string, protocol string) error {
 			CreatedAt:        time.Now(),
 			ChannelID:        info.ChannelID,
 			ChannelName:      info.ChannelName,
+			ProviderID:       info.ProviderID,
 			ModelRequested:   info.ModelRequested,
 			ModelUpstream:    info.ModelUpstream,
 			Protocol:         protocol,

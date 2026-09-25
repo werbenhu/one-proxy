@@ -70,23 +70,24 @@ func NewApp() (*App, error) {
 
 // rebuildAdapters 按当前配置重建渠道适配器（配置变更后调用）。
 func rebuildAdapters(cfg config.Config, registry *provider.Registry) {
-	for _, ch := range cfg.Channels {
-		if !ch.Enabled {
+	registry.Reset()
+	for _, p := range cfg.Providers {
+		if !p.Enabled {
 			continue
 		}
-		switch ch.Type {
+		switch p.Type {
 		case config.TypeAnthropicCompat:
-			registry.Register(ch.ID, anthropiccompat.New(ch.BaseURL, ch.APIKey))
+			registry.Register(p.ID, anthropiccompat.New(p.BaseURL, p.APIKey))
 		case config.TypeOpenAICompat:
-			registry.Register(ch.ID, openaicompat.New(ch.BaseURL, ch.APIKey))
+			registry.Register(p.ID, openaicompat.New(p.BaseURL, p.APIKey))
 		case config.TypeGrok:
-			registerGrok(ch, registry)
+			registerGrok(p, registry)
 		}
 	}
 }
 
 // grokOAuthExtra 当前渠道的 OAuth extra 快照（供适配器读）。
-func registerGrok(ch config.Channel, registry *provider.Registry) {
+func registerGrok(ch config.ProviderAccount, registry *provider.Registry) {
 	var extra struct {
 		Mode string `json:"mode"`
 	}
@@ -110,7 +111,7 @@ var (
 
 func bindExtraAccess(store *config.Store) {
 	currentExtra = func(channelID string) []byte {
-		ch, ok := store.Get().Channel(channelID)
+		ch, ok := store.Get().Provider(channelID)
 		if !ok {
 			return nil
 		}
@@ -118,9 +119,9 @@ func bindExtraAccess(store *config.Store) {
 	}
 	saveExtra = func(channelID string, data []byte) error {
 		return store.Update(func(c *config.Config) {
-			for i := range c.Channels {
-				if c.Channels[i].ID == channelID {
-					c.Channels[i].Extra = data
+			for i := range c.Providers {
+				if c.Providers[i].ID == channelID {
+					c.Providers[i].Extra = data
 					return
 				}
 			}
@@ -172,6 +173,76 @@ func (a *App) shutdown(ctx context.Context) { _ = a.server.Close() }
 
 // ===== Wails bindings（前端调用）=====
 
+func (a *App) GetProviders() []service.ProviderView { return a.svc.Providers() }
+
+func (a *App) GetProviderKeys(id string) (service.ProviderKeysView, error) {
+	return a.svc.ProviderKeys(id)
+}
+
+var jsonFileFilter = []runtime.FileFilter{{DisplayName: "JSON 文件", Pattern: "*.json"}}
+
+// ExportProviders 弹出保存对话框，把全部提供商（含凭证）写成 JSON；取消返回空串。
+func (a *App) ExportProviders() (string, error) {
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "导出提供商",
+		DefaultFilename: "oneproxy-providers.json",
+		Filters:         jsonFileFilter,
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	data, err := a.svc.ExportProviders()
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// ImportProviders 弹出打开对话框，合并导入提供商；取消返回空串。
+func (a *App) ImportProviders() (string, error) {
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{Title: "导入提供商", Filters: jsonFileFilter})
+	if err != nil || path == "" {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	added, skipped, err := a.svc.ImportProviders(data)
+	if err != nil {
+		return "", err
+	}
+	rebuildAdapters(a.store.Get(), a.registry)
+	return fmt.Sprintf("导入完成：新增 %d 个，跳过 %d 个（ID 重复或无效）", added, skipped), nil
+}
+
+func (a *App) SaveProvider(p config.ProviderAccount) error {
+	if err := a.svc.SaveProvider(p); err != nil {
+		return err
+	}
+	rebuildAdapters(a.store.Get(), a.registry)
+	return nil
+}
+
+func (a *App) DeleteProvider(id string) error {
+	if err := a.svc.DeleteProvider(id); err != nil {
+		return err
+	}
+	rebuildAdapters(a.store.Get(), a.registry)
+	return nil
+}
+
+func (a *App) GetProviderBalance(id string) (service.BalanceView, error) {
+	return a.svc.ProviderBalance(id)
+}
+
+func (a *App) GetProviderModels(id string) ([]provider.ModelInfo, error) {
+	return a.svc.ProviderModels(id)
+}
+
 func (a *App) GetChannels() []service.ChannelView { return a.svc.Channels() }
 
 func (a *App) SaveChannel(ch config.Channel) error { return a.svc.SaveChannel(ch) }
@@ -189,6 +260,8 @@ func (a *App) GetUsageSummary(rangeKey string) ([]usage.AggRow, error) {
 }
 
 func (a *App) TestChannel(id string) error { return a.svc.TestChannel(id) }
+
+func (a *App) TestProvider(id string) error { return a.svc.TestProvider(id) }
 
 func (a *App) StartGrokDeviceAuth(id string) (provider.DeviceAuthInfo, error) {
 	return a.svc.StartGrokDeviceAuth(id)

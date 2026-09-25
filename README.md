@@ -6,15 +6,16 @@
 
 ## 能力
 
-- **三种入口**：Anthropic `/v1/messages`（主力，Claude Code 用）、OpenAI Chat `/v1/chat/completions`、OpenAI Responses `/v1/responses`（grok 直通）；`GET /v1/models`
-- **供应商**：z.ai / bigmodel / kimi / minimax / deepseek / openrouter / opencode zen / commandcode / grok（OAuth 设备授权 + 自动刷新），以及任意自定义 OpenAI/Anthropic 兼容端点
-- **渠道路由**（One API 模型）：提供商=类型，渠道=线路；优先级主备 + 粘性；429 冷却切换（指数退避）、401/403 标记鉴权失败、400 按 body 细分；全不可用返回聚合人话错误
-- **模型别名**：`ModelMapping` 对外名 → 上游模型名（如 `claude-sonnet-4-6 → kimi-k3`）
+- **三种入口**：Anthropic `/v1/messages`（主力，Claude Code 用）、OpenAI Chat `/v1/chat/completions`、OpenAI Responses `/v1/responses`（支持 Grok 和兼容上游直通）；`GET /v1/models`
+- **提供商账户**：独立管理 z.ai / bigmodel / kimi / minimax / deepseek / openrouter / opencode zen / cmdc-proxy / Ollama Cloud / Grok（OAuth）以及自定义兼容端点的凭证、连接状态、模型列表和额度
+- **对外渠道**：一个渠道暴露一个模型，内部可绑定多个提供商和各自的上游模型；支持优先级主备与加权轮询
+- **故障切换**：429 冷却切换、401/403 标记鉴权失败、400 按 body 细分；全不可用返回聚合人话错误
+- **额度查询**：支持 DeepSeek/Kimi 账户余额、z.ai/BigModel/MiniMax Coding 套餐额度、Command Code 额度和 OpenRouter Credits，也可配置自定义查询地址
 - **协议保真**：canonical=Anthropic；请求内容字段不深度解析原样传输；未知 block/字段保留；`anthropic-beta`/`anthropic-version` 头白名单透传
-- **用量统计**：SQLite 按渠道×模型（对外+上游双维度），今天/7天/30天/全部
+- **用量统计**：SQLite 记录对外渠道、实际提供商、对外/上游模型；渠道汇总支持今天/7天/30天/全部，提供商页显示今日 Token
 - **托盘常驻**：关窗口不退出
 
-按个人工具裁剪（不做）：配额前置预判（只信 429）、权重随机、分组多租户、图表、多密钥、余额查询。
+按个人工具裁剪（不做）：配额前置预判（只信 429）、分组多租户、图表、单提供商多密钥。
 
 ## 快速开始
 
@@ -25,7 +26,14 @@ wails build
 build\bin\OneProxy.exe
 ```
 
-界面里「添加渠道」选预设（如 Kimi Coding Plan）→ 填 API Key → 测试 → 启用。
+界面里先在「提供商」添加账户并测试/查询额度，再在「渠道」创建对外模型并绑定一个或多个提供商。
+
+### Command Code 与 Ollama Cloud
+
+- **cmdc-proxy**：先启动 [cmdc-proxy](https://github.com/werbenhu/cmdc-proxy)，在 OneProxy 的「提供商」选择 `cmdc-proxy（本地代理）` 预设。默认地址 `http://127.0.0.1:55990/v1`，API Key 填 cmdc-proxy 的客户端密钥。OneProxy 的渠道可将对外模型映射为 `glm-5` 等 cmdc-proxy 支持的模型。
+- **额度**：cmdc-proxy 的客户端密钥可能无法查询 Command Code 原始额度。若使用客户端密钥，在「额度查询设置」填入 Command Code 原始 `user_` Key 作为专用查询密钥。
+- **官方 Command Code Provider API**：分别提供 OpenAI Chat/Responses 和 Anthropic Messages 端点，OneProxy 为此提供两个预设；开放模型与 Claude 模型须选择对应协议。Command Code CLI 使用的 `/alpha/generate` 是专有协议，与这些兼容端点不同。官方文档称 Go 套餐不开放 Provider API，其他套餐的权限以账户为准。
+- **Ollama Cloud**：选择 `Ollama Cloud` 预设，填 Ollama API Key；默认地址 `https://ollama.com/v1`，渠道中的上游模型填账户实际可用的云端模型 ID。
 
 ### CLI 模式（调试）
 
@@ -43,27 +51,38 @@ OneProxy.exe cli
   "listenPort": 8280,
   "localKey": "自动生成",
   "retainDays": 90,
-  "channels": [
+  "providers": [
     {
-      "id": "ch-kimi-a",
+      "id": "pv-kimi-a",
       "name": "Kimi 套餐 A",
+      "vendor": "kimi",
       "type": "anthropic-compat",
       "baseUrl": "https://api.moonshot.cn/anthropic",
       "apiKey": "sk-xxx",
-      "models": ["claude-sonnet-4-6"],
-      "modelMapping": { "claude-sonnet-4-6": "kimi-k3" },
-      "priority": 10,
+      "balanceKind": "moonshot",
       "enabled": true
     },
     {
-      "id": "ch-kimi-b",
+      "id": "pv-kimi-b",
       "name": "Kimi 套餐 B（备用）",
+      "vendor": "kimi",
       "type": "anthropic-compat",
       "baseUrl": "https://api.moonshot.cn/anthropic",
       "apiKey": "sk-yyy",
-      "models": ["claude-sonnet-4-6"],
-      "modelMapping": { "claude-sonnet-4-6": "kimi-k3" },
-      "priority": 5,
+      "balanceKind": "moonshot",
+      "enabled": true
+    }
+  ],
+  "channels": [
+    {
+      "id": "ch-claude-sonnet",
+      "name": "Claude Sonnet",
+      "model": "claude-sonnet-4-6",
+      "strategy": "priority",
+      "targets": [
+        {"providerId": "pv-kimi-a", "upstreamModel": "kimi-k3", "priority": 10, "weight": 1, "enabled": true},
+        {"providerId": "pv-kimi-b", "upstreamModel": "kimi-k3", "priority": 5, "weight": 1, "enabled": true}
+      ],
       "enabled": true
     }
   ]
@@ -88,20 +107,21 @@ export OPENAI_BASE_URL="http://127.0.0.1:8280/v1"
 export OPENAI_API_KEY="<本地密钥>"
 ```
 
-调试直连语法：`model=ch-<渠道ID>/<上游模型名>` 绕过路由直发指定渠道（仅 `ch-` 前缀解析，OpenRouter 的 `org/model` 不受影响）。
+调试直连语法：`model=pv-<提供商ID>/<上游模型名>` 绕过渠道调度直发指定提供商；迁移后的旧 `ch-...` 提供商 ID 也兼容。OpenRouter 的 `org/model` 不受影响。
 
 ## 架构
 
 ```
-proxy(入口/鉴权/SSE) → router(候选/主备/冷却/切换) → provider.Adapter
-                                                ├─ anthropiccompat（恒等重序列化）
-                                                ├─ openaicompat（convert 双向）
-                                                └─ grok（OAuth 刷新 + Responses 直通）
-usage(SQLite 记账) ← router 埋点回调          config(JSON)
+proxy(入口/鉴权/SSE) → channel(对外模型/调度策略) → provider account
+                              ↓                         ├─ anthropiccompat
+                        router(冷却/切换)                ├─ openaicompat
+usage(SQLite 记账) ← 路由埋点回调                       └─ grok
 ```
 
-- 新增标准兼容供应商：UI 选「自定义」预设填 BaseURL，零代码
+- 新增标准兼容供应商：在提供商页选「自定义」预设填 BaseURL，零代码
 - 新增专有供应商：实现 `provider.Adapter` 接口 + main 里 import
+
+Logo 源文件为 [oneproxy-logo.svg](frontend/src/assets/oneproxy-logo.svg) 和 [oneproxy-mark.svg](frontend/src/assets/oneproxy-mark.svg)；运行 `tools/generate-brand.ps1` 可同步生成 Windows 应用与托盘图标。
 
 包结构、设计决策与裁剪理由见 [plan.md](plan.md)。
 

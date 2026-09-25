@@ -274,3 +274,56 @@ func TestUnknownModel(t *testing.T) {
 		t.Fatal("应报错")
 	}
 }
+
+func TestRoundRobinRouting(t *testing.T) {
+	dir := t.TempDir()
+	store := config.NewStore(dir + "/config.json")
+	cfg := config.Default()
+	cfg.LocalKey = "k"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-a", Name: "A", Type: config.TypeOpenAICompat, BaseURL: "https://a", APIKey: "a", Enabled: true},
+		{ID: "pv-b", Name: "B", Type: config.TypeOpenAICompat, BaseURL: "https://b", APIKey: "b", Enabled: true},
+	}
+	cfg.Channels = []config.Channel{{ID: "ch-coding", Name: "Coding", Model: "coding", Strategy: config.StrategyRoundRobin, Enabled: true, Targets: []config.ChannelTarget{
+		{ProviderID: "pv-a", UpstreamModel: "model-a", Weight: 1, Enabled: true},
+		{ProviderID: "pv-b", UpstreamModel: "model-b", Weight: 1, Enabled: true},
+	}}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	a, b := &fakeAdapter{}, &fakeAdapter{}
+	registry := provider.NewRegistry()
+	registry.Register("pv-a", a)
+	registry.Register("pv-b", b)
+	r := New(store, registry)
+	for i := 0; i < 4; i++ {
+		if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "coding", MaxTokens: 8}, "coding"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(a.modelsSeen) != 2 || len(b.modelsSeen) != 2 {
+		t.Fatalf("轮询不均衡: a=%v b=%v", a.modelsSeen, b.modelsSeen)
+	}
+}
+
+func TestDirectProviderRouting(t *testing.T) {
+	dir := t.TempDir()
+	store := config.NewStore(dir + "/config.json")
+	cfg := config.Default()
+	cfg.LocalKey = "k"
+	cfg.Providers = []config.ProviderAccount{{ID: "pv-a", Name: "A", Type: config.TypeOpenAICompat, BaseURL: "https://a", APIKey: "a", Enabled: true}}
+	cfg.Channels = []config.Channel{{ID: "ch-public", Name: "Public", Model: "public", Strategy: config.StrategyPriority, Enabled: true, Targets: []config.ChannelTarget{{ProviderID: "pv-a", UpstreamModel: "normal", Enabled: true}}}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	a := &fakeAdapter{}
+	registry := provider.NewRegistry()
+	registry.Register("pv-a", a)
+	r := New(store, registry)
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "pv-a/special", MaxTokens: 8}, "pv-a/special"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.modelsSeen) != 1 || a.modelsSeen[0] != "special" {
+		t.Fatalf("直连模型错误: %v", a.modelsSeen)
+	}
+}

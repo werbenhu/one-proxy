@@ -15,6 +15,7 @@ type Record struct {
 	CreatedAt        time.Time
 	ChannelID        string
 	ChannelName      string
+	ProviderID       string
 	ModelRequested   string // 对外模型名
 	ModelUpstream    string // 映射后上游模型名
 	Protocol         string // anthropic | chat | responses
@@ -60,6 +61,7 @@ func (s *Store) migrate() error {
 		created_at INTEGER NOT NULL,
 		channel_id TEXT NOT NULL,
 		channel_name TEXT NOT NULL,
+		provider_id TEXT NOT NULL DEFAULT '',
 		model_requested TEXT NOT NULL,
 		model_upstream TEXT NOT NULL,
 		protocol TEXT NOT NULL,
@@ -76,16 +78,32 @@ func (s *Store) migrate() error {
 	if err != nil {
 		return fmt.Errorf("初始化用量表: %w", err)
 	}
+	var hasProviderID int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('request_log') WHERE name = 'provider_id'`).Scan(&hasProviderID); err != nil {
+		return fmt.Errorf("检查用量表版本: %w", err)
+	}
+	if hasProviderID == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE request_log ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("升级用量表: %w", err)
+		}
+		// 旧版每个渠道即一个上游账户；迁移后账户沿用原渠道 ID。
+		if _, err := s.db.Exec(`UPDATE request_log SET provider_id = channel_id WHERE provider_id = ''`); err != nil {
+			return fmt.Errorf("迁移历史用量: %w", err)
+		}
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_request_log_provider ON request_log(provider_id, created_at)`); err != nil {
+		return fmt.Errorf("创建提供商用量索引: %w", err)
+	}
 	return nil
 }
 
 // Insert 异步埋点写入（由 proxy 的 recorder goroutine 调用）。
 func (s *Store) Insert(r Record) error {
 	_, err := s.db.Exec(`INSERT INTO request_log
-		(created_at, channel_id, channel_name, model_requested, model_upstream, protocol,
+		(created_at, channel_id, channel_name, provider_id, model_requested, model_upstream, protocol,
 		 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, status, latency_ms, error)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		r.CreatedAt.Unix(), r.ChannelID, r.ChannelName, r.ModelRequested, r.ModelUpstream, r.Protocol,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		r.CreatedAt.Unix(), r.ChannelID, r.ChannelName, r.ProviderID, r.ModelRequested, r.ModelUpstream, r.Protocol,
 		r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheWriteTokens, r.Status, r.LatencyMs, r.Error)
 	if err != nil {
 		return fmt.Errorf("写入用量记录: %w", err)
@@ -237,6 +255,40 @@ func (s *Store) ChannelToday(now time.Time) (map[string]int64, error) {
 		out[id] = tokens
 	}
 	return out, rows.Err()
+}
+
+// ProviderToday 按真实上游账户汇总今日 Token。
+func (s *Store) ProviderToday(now time.Time) (map[string]int64, error) {
+	today, _, _, err := s.ProviderTokens(now)
+	return today, err
+}
+
+// ProviderTokens 按真实上游账户汇总今日 / 本周（周一起）/ 本月的 Token。
+func (s *Store) ProviderTokens(now time.Time) (today, week, month map[string]int64, err error) {
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	weekStart := todayStart.AddDate(0, 0, -(int(now.Weekday())+6)%7)
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	const tokens = "COALESCE(input_tokens,0)+COALESCE(output_tokens,0)+COALESCE(cache_read_tokens,0)"
+	rows, err := s.db.Query(`SELECT provider_id,
+		SUM(CASE WHEN created_at >= ? THEN `+tokens+` ELSE 0 END),
+		SUM(CASE WHEN created_at >= ? THEN `+tokens+` ELSE 0 END),
+		SUM(`+tokens+`)
+		FROM request_log WHERE created_at >= ? AND provider_id != '' GROUP BY provider_id`,
+		todayStart.Unix(), weekStart.Unix(), monthStart.Unix())
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer rows.Close()
+	today, week, month = map[string]int64{}, map[string]int64{}, map[string]int64{}
+	for rows.Next() {
+		var id string
+		var daySum, weekSum, monthSum int64
+		if err := rows.Scan(&id, &daySum, &weekSum, &monthSum); err != nil {
+			return nil, nil, nil, err
+		}
+		today[id], week[id], month[id] = daySum, weekSum, monthSum
+	}
+	return today, week, month, rows.Err()
 }
 
 // Cleanup 删除保留期外的记录，返回删除行数。

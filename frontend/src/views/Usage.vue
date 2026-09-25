@@ -13,7 +13,7 @@
     <table>
       <thead>
         <tr>
-          <th>渠道</th><th>对外模型</th><th>上游模型</th><th>请求数</th>
+          <th>提供商账户</th><th>对外模型</th><th>上游模型</th><th>请求数</th>
           <th>输入 token</th><th>输出 token</th><th>缓存读</th><th>错误</th>
         </tr>
       </thead>

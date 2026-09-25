@@ -65,6 +65,14 @@ func (r *Registry) Register(id string, a Adapter) {
 	}
 }
 
+// Reset replaces all runtime adapters after configuration changes.
+func (r *Registry) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.adapters = map[string]Adapter{}
+	r.states = map[string]ChannelState{}
+}
+
 func (r *Registry) Unregister(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

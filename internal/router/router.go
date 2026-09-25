@@ -1,8 +1,9 @@
-// Package router 渠道路由：模型名 → 候选渠道，优先级主备 + 故障切换。
+// Package router maps public channels to provider accounts, then applies the
+// configured priority or weighted round-robin policy with failover.
 //
 // 设计约束（plan.md §5.3）：
-//   - 候选 = Models 声明 ∧ Enabled ∧ 状态可用（cooling 过期自动恢复）
-//   - 固定取最高可用优先级（粘性，prompt cache 友好），无权重随机
+//   - 候选 = 渠道绑定 ∧ 提供商 Enabled ∧ 状态可用（cooling 过期自动恢复）
+//   - priority 固定取最高优先级；round-robin 按权重轮询
 //   - 冷却内存态，重启清零
 //   - 全不可用：不对 auth-failed 强打，聚合人话错误返回
 package router
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/werbenhu/one-proxy/internal/config"
@@ -42,6 +44,8 @@ type Router struct {
 	store    *config.Store
 	registry *provider.Registry
 	now      func() time.Time
+	rrMu     sync.Mutex
+	rrNext   map[string]int
 
 	// onUsage 用量埋点回调（proxy 注入；可为 nil）。成功与失败都上报，
 	// 流式在事件流结束后回调。
@@ -52,6 +56,7 @@ type Router struct {
 type RequestInfo struct {
 	ChannelID      string
 	ChannelName    string
+	ProviderID     string
 	ModelRequested string // 客户端请求的对外模型名
 	ModelUpstream  string // 实际转发给上游的模型名
 	Usage          anthropic.Usage
@@ -70,12 +75,13 @@ func (r *Router) emitUsage(info RequestInfo) {
 }
 
 func New(store *config.Store, registry *provider.Registry) *Router {
-	return &Router{store: store, registry: registry, now: time.Now}
+	return &Router{store: store, registry: registry, now: time.Now, rrNext: map[string]int{}}
 }
 
 // Target 一次路由决策的结果：渠道 + 重写后的上游模型名。
 type Target struct {
 	Channel       config.Channel
+	Provider      config.ProviderAccount
 	Adapter       provider.Adapter
 	UpstreamModel string
 }
@@ -85,53 +91,119 @@ type Target struct {
 func (r *Router) Resolve(model string) ([]Target, error) {
 	cfg := r.store.Get()
 	if id, rest, ok := splitDirect(model); ok {
-		ch, found := cfg.Channel(id)
-		if !found || !ch.Enabled {
-			return nil, fmt.Errorf("直连渠道 %s 不存在或未启用", id)
-		}
-		adapter, ok := r.registry.Get(ch.ID)
-		if !ok {
-			return nil, fmt.Errorf("渠道 %s 适配器未注册", ch.ID)
-		}
-		return []Target{{Channel: ch, Adapter: adapter, UpstreamModel: rest}}, nil
-	}
-	var candidates []Target
-	for _, ch := range cfg.Channels {
-		if !ch.Enabled {
-			continue
-		}
-		declared := false
-		for _, m := range ch.Models {
-			if m == model {
-				declared = true
-				break
+		p, found := cfg.Provider(id)
+		if found && p.Enabled {
+			adapter, registered := r.registry.Get(p.ID)
+			if !registered {
+				return nil, fmt.Errorf("提供商 %s 适配器未注册", p.ID)
 			}
+			return []Target{{Channel: config.Channel{ID: id, Name: p.Name, Model: model, Enabled: true}, Provider: p, Adapter: adapter, UpstreamModel: rest}}, nil
 		}
-		if !declared {
+		ch, channelFound := cfg.Channel(id)
+		if !channelFound || !ch.Enabled {
+			return nil, fmt.Errorf("直连目标 %s 不存在或未启用", id)
+		}
+		targets := r.targetsForChannel(cfg, ch)
+		for i := range targets {
+			targets[i].UpstreamModel = rest
+		}
+		if len(targets) == 0 {
+			return nil, fmt.Errorf("渠道 %s 没有可用提供商", id)
+		}
+		return targets, nil
+	}
+	for _, ch := range cfg.Channels {
+		if !ch.Enabled || ch.Model != model {
 			continue
 		}
-		adapter, ok := r.registry.Get(ch.ID)
-		if !ok {
-			continue
+		candidates := r.targetsForChannel(cfg, ch)
+		if len(candidates) == 0 {
+			return nil, fmt.Errorf("%w: %s（渠道没有已启用的提供商）", ErrModelNotDeclared, model)
 		}
-		upstream := model
-		if mapped, ok := ch.ModelMapping[model]; ok {
-			upstream = mapped
+		if ch.Strategy == config.StrategyRoundRobin {
+			return r.rotate(ch.ID, candidates), nil
 		}
-		candidates = append(candidates, Target{Channel: ch, Adapter: adapter, UpstreamModel: upstream})
+		return candidates, nil
 	}
-	if len(candidates) == 0 {
-		return nil, fmt.Errorf("%w: %s", ErrModelNotDeclared, model)
-	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		return candidates[i].Channel.Priority > candidates[j].Channel.Priority
-	})
-	return candidates, nil
+	return nil, fmt.Errorf("%w: %s", ErrModelNotDeclared, model)
 }
 
-// splitDirect 解析 ch-<id>/<model>；仅 ch- 前缀（避免拆 OpenRouter org/model）。
+func (r *Router) targetsForChannel(cfg config.Config, ch config.Channel) []Target {
+	var candidates []Target
+	for _, binding := range ch.Targets {
+		if !binding.Enabled {
+			continue
+		}
+		p, ok := cfg.Provider(binding.ProviderID)
+		if !ok || !p.Enabled {
+			continue
+		}
+		adapter, ok := r.registry.Get(p.ID)
+		if !ok {
+			continue
+		}
+		candidates = append(candidates, Target{Channel: ch, Provider: p, Adapter: adapter, UpstreamModel: binding.UpstreamModel})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return targetPriority(ch, candidates[i].Provider.ID) > targetPriority(ch, candidates[j].Provider.ID)
+	})
+	return candidates
+}
+
+func targetPriority(ch config.Channel, providerID string) int {
+	for _, target := range ch.Targets {
+		if target.ProviderID == providerID {
+			return target.Priority
+		}
+	}
+	return 0
+}
+
+func targetWeight(ch config.Channel, providerID string) int {
+	for _, target := range ch.Targets {
+		if target.ProviderID == providerID {
+			if target.Weight > 0 {
+				return target.Weight
+			}
+			return 1
+		}
+	}
+	return 1
+}
+
+func (r *Router) rotate(channelID string, candidates []Target) []Target {
+	var ring []int
+	for i, target := range candidates {
+		for n := 0; n < targetWeight(target.Channel, target.Provider.ID); n++ {
+			ring = append(ring, i)
+		}
+	}
+	if len(ring) == 0 {
+		return candidates
+	}
+	r.rrMu.Lock()
+	start := r.rrNext[channelID] % len(ring)
+	r.rrNext[channelID] = (start + 1) % len(ring)
+	r.rrMu.Unlock()
+	out, seen := make([]Target, 0, len(candidates)), map[int]bool{}
+	for n := 0; n < len(ring); n++ {
+		i := ring[(start+n)%len(ring)]
+		if !seen[i] {
+			out = append(out, candidates[i])
+			seen[i] = true
+		}
+	}
+	for i := range candidates {
+		if !seen[i] {
+			out = append(out, candidates[i])
+		}
+	}
+	return out
+}
+
+// splitDirect parses provider/channel direct routing without mistaking org/model.
 func splitDirect(model string) (id, rest string, ok bool) {
-	if !strings.HasPrefix(model, "ch-") {
+	if !strings.HasPrefix(model, "ch-") && !strings.HasPrefix(model, "pv-") {
 		return "", "", false
 	}
 	idx := strings.Index(model, "/")
@@ -147,12 +219,12 @@ func (r *Router) pickAvailable(candidates []Target) ([]Target, []string) {
 	var available []Target
 	var reasons []string
 	for _, t := range candidates {
-		state := r.registry.State(t.Channel.ID)
+		state := r.registry.State(t.Provider.ID)
 		switch {
 		case state.Status == provider.StatusAuthFailed:
-			reasons = append(reasons, fmt.Sprintf("%s 鉴权失败（%s）", t.Channel.Name, state.FailReason))
+			reasons = append(reasons, fmt.Sprintf("%s 鉴权失败（%s）", t.Provider.Name, state.FailReason))
 		case state.Status == provider.StatusCooling && !now.After(state.CoolingUntil):
-			reasons = append(reasons, fmt.Sprintf("%s 冷却至 %s", t.Channel.Name, state.CoolingUntil.Format("15:04:05")))
+			reasons = append(reasons, fmt.Sprintf("%s 冷却至 %s", t.Provider.Name, state.CoolingUntil.Format("15:04:05")))
 		default:
 			available = append(available, t)
 		}
@@ -180,7 +252,7 @@ func (r *Router) Invoke(ctx context.Context, req *anthropic.Request, requestedMo
 		if err == nil {
 			r.applySuccess(t)
 			r.emitUsage(RequestInfo{
-				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name,
+				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name, ProviderID: t.Provider.ID,
 				ModelRequested: requestedModel, ModelUpstream: t.UpstreamModel,
 				Usage: resp.Usage, Status: 200, LatencyMs: latency,
 			})
@@ -189,14 +261,14 @@ func (r *Router) Invoke(ctx context.Context, req *anthropic.Request, requestedMo
 		lastErr = err
 		r.applyFailure(t, err)
 		r.emitUsage(RequestInfo{
-			ChannelID: t.Channel.ID, ChannelName: t.Channel.Name,
+			ChannelID: t.Channel.ID, ChannelName: t.Channel.Name, ProviderID: t.Provider.ID,
 			ModelRequested: requestedModel, ModelUpstream: t.UpstreamModel,
 			Status: statusCodeOf(err), LatencyMs: latency, Error: err.Error(),
 		})
 		if !provider.MaySwitch(err) {
 			return nil, err
 		}
-		reasons = append(reasons, fmt.Sprintf("%s：%s", t.Channel.Name, err.Error()))
+		reasons = append(reasons, fmt.Sprintf("%s：%s", t.Provider.Name, err.Error()))
 	}
 	if len(candidates) == 1 {
 		// 仅一条候选渠道：直接返回原始错误（聚合无额外价值）
@@ -237,14 +309,14 @@ func (r *Router) Stream(ctx context.Context, req *anthropic.Request, requestedMo
 			lastErr = err
 			r.applyFailure(t, err)
 			r.emitUsage(RequestInfo{
-				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name,
+				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name, ProviderID: t.Provider.ID,
 				ModelRequested: requestedModel, ModelUpstream: t.UpstreamModel,
 				Status: statusCodeOf(err), LatencyMs: latency, Error: err.Error(),
 			})
 			if !provider.MaySwitch(err) {
 				return nil, err
 			}
-			reasons = append(reasons, fmt.Sprintf("%s：%s", t.Channel.Name, err.Error()))
+			reasons = append(reasons, fmt.Sprintf("%s：%s", t.Provider.Name, err.Error()))
 			continue
 		}
 		r.applySuccess(t)
@@ -258,7 +330,7 @@ func (r *Router) Stream(ctx context.Context, req *anthropic.Request, requestedMo
 				wrapped <- ev
 			}
 			r.emitUsage(RequestInfo{
-				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name,
+				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name, ProviderID: t.Provider.ID,
 				ModelRequested: requested, ModelUpstream: upstream,
 				Usage: u, Status: 200, LatencyMs: time.Since(started).Milliseconds(),
 			})
@@ -277,11 +349,11 @@ func (r *Router) applyFailure(t Target, err error) {
 	switch kind {
 	case provider.ErrKindQuota:
 		until := r.now().Add(cooldownBase)
-		r.registry.SetCooling(t.Channel.ID, until, "429 配额/限速")
+		r.registry.SetCooling(t.Provider.ID, until, "429 配额/限速")
 	case provider.ErrKindRateLimit:
-		r.registry.SetCooling(t.Channel.ID, r.now().Add(time.Minute), "限速")
+		r.registry.SetCooling(t.Provider.ID, r.now().Add(time.Minute), "限速")
 	case provider.ErrKindAuth:
-		r.registry.SetAuthFailed(t.Channel.ID, "上游 401/403")
+		r.registry.SetAuthFailed(t.Provider.ID, "上游 401/403")
 	case provider.ErrKindUpstream, provider.ErrKindBadRequest, provider.ErrKindNone:
 		// 5xx/网络/400 不改状态
 	}
@@ -289,5 +361,5 @@ func (r *Router) applyFailure(t Target, err error) {
 
 // applySuccess 恢复渠道状态（成功调用后清除冷却标记）。
 func (r *Router) applySuccess(t Target) {
-	r.registry.SetOK(t.Channel.ID)
+	r.registry.SetOK(t.Provider.ID)
 }

@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -101,6 +102,62 @@ func TestChannelToday(t *testing.T) {
 	}
 	if out["ch-a"] != 10 {
 		t.Fatalf("今日 token: %d", out["ch-a"])
+	}
+}
+
+func TestProviderTodayAcrossChannels(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	for _, rec := range []Record{
+		{CreatedAt: now, ChannelID: "ch-a", ChannelName: "A", ProviderID: "pv-one", InputTokens: 7, OutputTokens: 3},
+		{CreatedAt: now, ChannelID: "ch-b", ChannelName: "B", ProviderID: "pv-one", InputTokens: 5},
+		{CreatedAt: now, ChannelID: "ch-a", ChannelName: "A", ProviderID: "pv-two", InputTokens: 9},
+	} {
+		if err := s.Insert(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := s.ProviderToday(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["pv-one"] != 15 || out["pv-two"] != 9 {
+		t.Fatalf("按提供商汇总错误: %+v", out)
+	}
+}
+
+func TestMigrateLegacyUsageProviderID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE request_log (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
+		channel_id TEXT NOT NULL, channel_name TEXT NOT NULL,
+		model_requested TEXT NOT NULL, model_upstream TEXT NOT NULL, protocol TEXT NOT NULL,
+		input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+		cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+		status INTEGER NOT NULL DEFAULT 0, latency_ms INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '');
+		INSERT INTO request_log (created_at,channel_id,channel_name,model_requested,model_upstream,protocol,input_tokens)
+		VALUES (strftime('%s','now'),'ch-old','Old','m','m','chat',12);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	out, err := s.ProviderToday(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["ch-old"] != 12 {
+		t.Fatalf("历史记录未迁移: %+v", out)
 	}
 }
 

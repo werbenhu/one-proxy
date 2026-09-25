@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 160" role="img" aria-label="OneProxy">
+  <rect x="0" y="0" width="160" height="160" rx="34" fill="#0b1718"/>
+  <path d="M37 44L78 80L37 116M78 80H124" fill="none" stroke="#42d5ae" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="37" cy="44" r="10" fill="#8af3d3"/>
+  <circle cx="37" cy="116" r="10" fill="#8af3d3"/>
+  <circle cx="78" cy="80" r="11" fill="#0b1718" stroke="#c4ffe7" stroke-width="7"/>
+  <circle cx="124" cy="80" r="10" fill="#e9fff3"/>
+  <text x="190" y="108" fill="#e8f5f2" font-family="Segoe UI, Microsoft YaHei, sans-serif" font-size="83" font-weight="700" letter-spacing="-3">OneProxy</text>
+</svg>

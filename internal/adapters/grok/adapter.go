@@ -18,7 +18,7 @@ import (
 	"github.com/werbenhu/one-proxy/internal/provider"
 )
 
-// ExtraJSON grok 渠道私有配置（存于 Channel.Extra）。
+// ExtraJSON is the private OAuth state stored on ProviderAccount.Extra.
 type ExtraJSON struct {
 	Mode         string `json:"mode"` // api_key | oauth
 	AccessToken  string `json:"accessToken,omitempty"`
@@ -69,11 +69,12 @@ func (t *tokenStore) InvalidateOAuth() error {
 
 // Adapter grok 渠道适配器。
 type Adapter struct {
-	http      *http.Client
-	creds     upstream.CredentialSource
-	apiKey    string
-	client    *upstream.Client
-	onRefresh func() // 测试钩子
+	http       *http.Client
+	creds      upstream.CredentialSource
+	apiKey     string
+	client     *upstream.Client
+	oauthStore *tokenStore
+	onRefresh  func() // 测试钩子
 }
 
 // New apiKey 模式。baseURL 为空用官方默认（测试注入假上游）。
@@ -91,6 +92,7 @@ func NewOAuth(baseURL string, getExtra func() []byte, saveExtra func([]byte) err
 	a := &Adapter{}
 	a.http = defaultHTTPClient()
 	store := &tokenStore{getExtra: getExtra, saveExtra: saveExtra}
+	a.oauthStore = store
 	source := auth.NewSource(oauthRefresher{}, store)
 	a.creds = oauthCredential{source: source, onStatus: onStatus}
 	a.client = upstream.NewClient(a.http, a.creds)
@@ -272,6 +274,16 @@ func min(a, b int) int {
 	return b
 }
 
+// AccessToken 返回当前 OAuth access token（自动刷新）；API Key 模式下报错。
+// 供 service 层查询订阅额度（cli-chat-proxy /billing）。
+func (a *Adapter) AccessToken(ctx context.Context) (string, error) {
+	oc, ok := a.creds.(oauthCredential)
+	if !ok {
+		return "", fmt.Errorf("当前 Grok 提供商为 API Key 模式，无 OAuth 凭据")
+	}
+	return oc.source.AccessToken(ctx)
+}
+
 // StartDeviceAuth 发起设备授权。
 func (a *Adapter) StartDeviceAuth(ctx context.Context) (provider.DeviceAuthInfo, error) {
 	client := auth.NewOAuthClient(a.http)
@@ -288,9 +300,15 @@ func (a *Adapter) StartDeviceAuth(ctx context.Context) (provider.DeviceAuthInfo,
 
 // PollDeviceAuth 轮询授权结果（成功后写回 extra）。
 func (a *Adapter) PollDeviceAuth(ctx context.Context, deviceCode string) error {
+	if a.oauthStore == nil {
+		return fmt.Errorf("当前 Grok 提供商未配置 OAuth 模式")
+	}
 	client := auth.NewOAuthClient(a.http)
-	_, err := client.Poll(ctx, deviceCode)
-	return err
+	token, err := client.Poll(ctx, deviceCode)
+	if err != nil {
+		return err
+	}
+	return a.oauthStore.SaveOAuth(auth.OAuth{AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, ExpiresAt: token.ExpiresAt})
 }
 
 func errorEvent(err error) json.RawMessage {

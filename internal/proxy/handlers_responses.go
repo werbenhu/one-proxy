@@ -11,8 +11,7 @@ import (
 	"github.com/werbenhu/one-proxy/internal/router"
 )
 
-// Responses OpenAI Responses 入口。V1 仅支持实现了 ForwardRaw 的适配器
-// （grok）：原始 body 直通上游，不做通用转换（plan.md §9）。
+// Responses forwards to an upstream adapter that supports the Responses API.
 func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 	if !h.authorized(r) {
 		writeChatError(w, http.StatusUnauthorized, "invalid_api_key", "本地代理密钥校验失败")
@@ -41,53 +40,49 @@ func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 		h.writeChatUpstreamError(w, err)
 		return
 	}
-	// 直通候选：第一个支持 responses 协议的可用渠道
-	var chosen *router.Target
 	var reasons []string
-	for i := range targets {
-		t := targets[i]
-		if !h.registry.Available(t.Channel.ID) {
+	for _, t := range targets {
+		if !h.registry.Available(t.Provider.ID) {
+			reasons = append(reasons, t.Provider.Name+" 正在冷却或鉴权失败")
 			continue
 		}
 		raw, ok := t.Adapter.(provider.RawForwardCapable)
 		if !ok || !supportsProtocol(raw, provider.ProtocolResponses) {
+			reasons = append(reasons, t.Provider.Name+" 不支持 Responses")
 			continue
 		}
-		chosen = &targets[i]
-		break
-	}
-	if chosen == nil {
-		if len(reasons) == 0 {
-			reasons = append(reasons, "没有支持 responses 协议的可用渠道（V1 仅 grok 渠道支持）")
+		fwdBody := body
+		if t.UpstreamModel != probe.Model {
+			fwdBody, err = rewriteModel(body, t.UpstreamModel)
+			if err != nil {
+				writeChatError(w, http.StatusBadRequest, "invalid_request_error", "重写 model 失败")
+				return
+			}
 		}
-		writeChatError(w, http.StatusServiceUnavailable, "server_error", strings.Join(reasons, "；"))
+		result, callErr := raw.ForwardRaw(r.Context(), provider.ProtocolResponses, fwdBody, nil, probe.Stream)
+		if callErr != nil {
+			h.applyDirectFailure(t, callErr)
+			if !provider.MaySwitch(callErr) {
+				h.writeChatUpstreamError(w, callErr)
+				return
+			}
+			reasons = append(reasons, t.Provider.Name+"："+callErr.Error())
+			continue
+		}
+		defer result.Body.Close()
+		ct := result.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(result.StatusCode)
+		_, _ = io.Copy(w, result.Body)
 		return
 	}
-	raw := chosen.Adapter.(provider.RawForwardCapable)
-	// 直通路径的 model 重写：raw JSON 的 model 字段（plan.md §4）
-	fwdBody := body
-	if chosen.UpstreamModel != probe.Model {
-		fwdBody, err = rewriteModel(body, chosen.UpstreamModel)
-		if err != nil {
-			writeChatError(w, http.StatusBadRequest, "invalid_request_error", "重写 model 失败")
-			return
-		}
+	if len(reasons) == 0 {
+		reasons = append(reasons, "没有支持 Responses 协议的可用提供商")
 	}
-	result, err := raw.ForwardRaw(r.Context(), provider.ProtocolResponses, fwdBody, nil, probe.Stream)
-	if err != nil {
-		h.applyDirectFailure(*chosen, err)
-		h.writeChatUpstreamError(w, err)
-		return
-	}
-	defer result.Body.Close()
-	// 上游响应原样回写（responses 协议恒等）
-	ct := result.Header.Get("Content-Type")
-	if ct == "" {
-		ct = "application/json"
-	}
-	w.Header().Set("Content-Type", ct)
-	w.WriteHeader(result.StatusCode)
-	_, _ = io.Copy(w, result.Body)
+	writeChatError(w, http.StatusServiceUnavailable, "server_error", strings.Join(reasons, "；"))
 }
 
 func supportsProtocol(a provider.RawForwardCapable, p provider.Protocol) bool {
@@ -102,9 +97,9 @@ func supportsProtocol(a provider.RawForwardCapable, p provider.Protocol) bool {
 func (h *Handler) applyDirectFailure(t router.Target, err error) {
 	switch provider.KindOf(err) {
 	case provider.ErrKindQuota:
-		h.registry.SetCooling(t.Channel.ID, time.Now().Add(5*time.Minute), "429 配额/限速")
+		h.registry.SetCooling(t.Provider.ID, time.Now().Add(5*time.Minute), "429 配额/限速")
 	case provider.ErrKindAuth:
-		h.registry.SetAuthFailed(t.Channel.ID, "上游 401/403")
+		h.registry.SetAuthFailed(t.Provider.ID, "上游 401/403")
 	}
 }
 
@@ -114,6 +109,10 @@ func rewriteModel(body []byte, model string) ([]byte, error) {
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
-	m["model"] = []byte(`"` + model + `"`)
+	encoded, err := json.Marshal(model)
+	if err != nil {
+		return nil, err
+	}
+	m["model"] = encoded
 	return json.Marshal(m)
 }

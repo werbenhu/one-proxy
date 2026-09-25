@@ -3,5 +3,28 @@ frontend/dist/*
 !frontend/dist/index.html
 build/bin/
 *.exe
-one-proxy.db
 *.test
+
+# Local config, env, and runtime data that may contain API keys
+.env
+.env.*
+!.env.example
+config.json
+*.local.json
+*.db
+*.sqlite
+*.sqlite3
+one-proxy.db
+
+# Credentials and key material
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+secrets/
+credentials/
+auth.json
+tokens.json
+oauth.json

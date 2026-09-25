@@ -39,7 +39,7 @@ func (s *Store) Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	s.cfg = cfg
+	s.cfg = Normalize(cfg)
 	return cfg, nil
 }
 
@@ -54,19 +54,24 @@ func parse(data []byte) (Config, error) {
 	if err := Validate(cfg); err != nil {
 		return Config{}, err
 	}
-	return cfg, nil
+	return Normalize(cfg), nil
 }
 
 func (s *Store) Save(cfg Config) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveLocked(cfg)
+}
+
+func (s *Store) saveLocked(cfg Config) error {
 	if err := Validate(cfg); err != nil {
 		return err
 	}
+	cfg = Normalize(cfg)
 	data, err := jsonMarshalIndent(cfg)
 	if err != nil {
 		return fmt.Errorf("序列化配置: %w", err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if dir := filepath.Dir(s.path); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("创建配置目录: %w", err)
@@ -88,10 +93,17 @@ func (s *Store) Get() Config {
 // Update 在锁内修改配置并持久化。
 func (s *Store) Update(fn func(*Config)) error {
 	s.mu.Lock()
-	cfg := s.cfg
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	data, err := json.Marshal(s.cfg)
+	if err != nil {
+		return fmt.Errorf("复制配置: %w", err)
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("复制配置: %w", err)
+	}
 	fn(&cfg)
-	return s.Save(cfg)
+	return s.saveLocked(cfg)
 }
 
 // BackupInvalidAndReset 备份损坏配置并恢复默认值，返回备份路径。

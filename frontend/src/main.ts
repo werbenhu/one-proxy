@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import App from './App.vue'
 import Channels from './views/Channels.vue'
+import Providers from './views/Providers.vue'
 import Usage from './views/Usage.vue'
 import Settings from './views/Settings.vue'
 import './style.css'
@@ -9,7 +10,8 @@ import './style.css'
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/', redirect: '/channels' },
+    { path: '/', redirect: '/providers' },
+    { path: '/providers', component: Providers },
     { path: '/channels', component: Channels },
     { path: '/usage', component: Usage },
     { path: '/settings', component: Settings },

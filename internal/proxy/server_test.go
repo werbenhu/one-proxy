@@ -14,6 +14,7 @@ import (
 
 	anthropiccompat "github.com/werbenhu/one-proxy/internal/adapters/anthropiccompat"
 	grokadapter "github.com/werbenhu/one-proxy/internal/adapters/grok"
+	openaicompat "github.com/werbenhu/one-proxy/internal/adapters/openaicompat"
 	"github.com/werbenhu/one-proxy/internal/config"
 	"github.com/werbenhu/one-proxy/internal/protocol/anthropic"
 	"github.com/werbenhu/one-proxy/internal/provider"
@@ -361,11 +362,15 @@ func TestUsageRecording(t *testing.T) {
 		t.Fatalf("埋点未落库: %+v", rows)
 	}
 	r0 := rows[0]
-	if r0.ChannelID != "ch-u" || r0.ModelRequested != "m" || r0.ModelUpstream != "kimi-k3" {
+	if r0.ChannelID != store.Get().Channels[0].ID || r0.ModelRequested != "m" || r0.ModelUpstream != "kimi-k3" {
 		t.Fatalf("埋点维度: %+v", r0)
 	}
 	if r0.InputTokens != 11 || r0.OutputTokens != 7 || r0.CacheRead != 3 {
 		t.Fatalf("token 记账: %+v", r0)
+	}
+	providerToday, err := srv.UsageStore().ProviderToday(time.Now())
+	if err != nil || providerToday["ch-u"] != 21 {
+		t.Fatalf("提供商用量: %+v, %v", providerToday, err)
 	}
 }
 
@@ -418,5 +423,66 @@ func TestResponsesEndpointDirect(t *testing.T) {
 	}
 	if string(hit["input"]) != `"hi"` {
 		t.Fatalf("直通请求保真: %s", hit["input"])
+	}
+}
+
+func TestResponsesOpenAICompatibleFailover(t *testing.T) {
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"quota"}`, http.StatusTooManyRequests)
+	}))
+	defer first.Close()
+	var observedModel string
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Errorf("上游路径: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer key-b" {
+			t.Errorf("上游鉴权错误")
+		}
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		observedModel = body.Model
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_b","object":"response","output":[]}`))
+	}))
+	defer second.Close()
+	store := config.NewStore(filepath.Join(t.TempDir(), "config.json"))
+	cfg := config.Default()
+	cfg.LocalKey = "testkey123"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-a", Name: "A", Type: config.TypeOpenAICompat, BaseURL: first.URL + "/v1", APIKey: "key-a", Enabled: true},
+		{ID: "pv-b", Name: "B", Type: config.TypeOpenAICompat, BaseURL: second.URL + "/v1", APIKey: "key-b", Enabled: true},
+	}
+	cfg.Channels = []config.Channel{{ID: "ch-public", Name: "Public", Model: "public", Strategy: config.StrategyPriority, Enabled: true, Targets: []config.ChannelTarget{
+		{ProviderID: "pv-a", UpstreamModel: "upstream-a", Priority: 10, Enabled: true},
+		{ProviderID: "pv-b", UpstreamModel: "upstream-b", Priority: 5, Enabled: true},
+	}}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	registry := provider.NewRegistry()
+	registry.Register("pv-a", openaicompat.New(first.URL+"/v1", "key-a"))
+	registry.Register("pv-b", openaicompat.New(second.URL+"/v1", "key-b"))
+	server := NewServer(store, registry)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/responses", strings.NewReader(`{"model":"public","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d: %s", resp.StatusCode, data)
+	}
+	if observedModel != "upstream-b" {
+		t.Fatalf("上游模型映射错误: %s", observedModel)
+	}
+	if registry.State("pv-a").Status != provider.StatusCooling {
+		t.Fatalf("首选提供商未冷却: %+v", registry.State("pv-a"))
 	}
 }

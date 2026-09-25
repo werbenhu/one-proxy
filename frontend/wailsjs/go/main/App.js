@@ -10,12 +10,36 @@ export function DeleteChannel(arg1) {
   return window['go']['main']['App']['DeleteChannel'](arg1);
 }
 
+export function DeleteProvider(arg1) {
+  return window['go']['main']['App']['DeleteProvider'](arg1);
+}
+
+export function ExportProviders() {
+  return window['go']['main']['App']['ExportProviders']();
+}
+
 export function GetChannels() {
   return window['go']['main']['App']['GetChannels']();
 }
 
 export function GetPresets() {
   return window['go']['main']['App']['GetPresets']();
+}
+
+export function GetProviderBalance(arg1) {
+  return window['go']['main']['App']['GetProviderBalance'](arg1);
+}
+
+export function GetProviderKeys(arg1) {
+  return window['go']['main']['App']['GetProviderKeys'](arg1);
+}
+
+export function GetProviderModels(arg1) {
+  return window['go']['main']['App']['GetProviderModels'](arg1);
+}
+
+export function GetProviders() {
+  return window['go']['main']['App']['GetProviders']();
 }
 
 export function GetSettings() {
@@ -26,8 +50,16 @@ export function GetUsageSummary(arg1) {
   return window['go']['main']['App']['GetUsageSummary'](arg1);
 }
 
+export function ImportProviders() {
+  return window['go']['main']['App']['ImportProviders']();
+}
+
 export function SaveChannel(arg1) {
   return window['go']['main']['App']['SaveChannel'](arg1);
+}
+
+export function SaveProvider(arg1) {
+  return window['go']['main']['App']['SaveProvider'](arg1);
 }
 
 export function SaveSettings(arg1) {
@@ -40,4 +72,8 @@ export function StartGrokDeviceAuth(arg1) {
 
 export function TestChannel(arg1) {
   return window['go']['main']['App']['TestChannel'](arg1);
+}
+
+export function TestProvider(arg1) {
+  return window['go']['main']['App']['TestProvider'](arg1);
 }

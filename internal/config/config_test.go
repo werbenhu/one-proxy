@@ -97,12 +97,24 @@ func TestStoreRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("重新 Load: %v", err)
 	}
-	if len(loaded.Channels) != 1 || loaded.Channels[0].ModelMapping["claude-sonnet-4-6"] != "glm-5.3" {
-		t.Fatalf("roundtrip 数据丢失: %+v", loaded.Channels)
+	if len(loaded.Providers) != 1 || loaded.Providers[0].ID != "ch-zai" {
+		t.Fatalf("旧配置未迁移提供商: %+v", loaded.Providers)
 	}
-	if loaded.Channels[0].Priority != 10 {
-		t.Fatalf("Priority 丢失")
+	if len(loaded.Channels) != 2 || loaded.Channels[0].Targets[0].UpstreamModel != "glm-5.3" {
+		t.Fatalf("旧配置未迁移渠道: %+v", loaded.Channels)
 	}
+	if loaded.Channels[0].Targets[0].Priority != 10 {
+		t.Fatalf("目标优先级丢失")
+	}
+}
+
+func TestValidateModernProviderAndChannel(t *testing.T) {
+	cfg := Default()
+	cfg.Providers = []ProviderAccount{{ID: "pv-a", Name: "A", Type: TypeOpenAICompat, BaseURL: "https://example.com/v1", APIKey: "k", Enabled: true}}
+	cfg.Channels = []Channel{{ID: "ch-public", Name: "Public", Model: "coding", Strategy: StrategyRoundRobin, Enabled: true, Targets: []ChannelTarget{{ProviderID: "pv-a", UpstreamModel: "model-a", Weight: 1, Enabled: true}}}}
+	if err := Validate(cfg); err != nil { t.Fatal(err) }
+	cfg.Channels[0].Targets[0].ProviderID = "missing"
+	if err := Validate(cfg); err == nil || !strings.Contains(err.Error(), "不存在") { t.Fatalf("应拒绝悬空绑定: %v", err) }
 }
 
 func TestStoreCorruptRecovery(t *testing.T) {

@@ -26,15 +26,13 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 		if !ch.Enabled {
 			continue
 		}
-		for _, m := range ch.Models {
-			if seen[m] {
-				continue
-			}
-			seen[m] = true
-			data = append(data, map[string]any{
-				"id": m, "object": "model", "created": 0, "owned_by": ch.ID,
-			})
+		if seen[ch.Model] {
+			continue
 		}
+		seen[ch.Model] = true
+		data = append(data, map[string]any{
+			"id": ch.Model, "object": "model", "created": 0, "owned_by": ch.ID,
+		})
 	}
 	if data == nil {
 		data = []map[string]any{}
