@@ -4,6 +4,7 @@ package usage
 import (
 	"database/sql"
 	"fmt"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -28,7 +29,9 @@ type Record struct {
 
 // Store SQLite 记账存储。
 type Store struct {
-	db *sql.DB
+	db        *sql.DB
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func Open(path string) (*Store, error) {
@@ -45,7 +48,11 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+// Close 关闭底层连接（幂等）。
+func (s *Store) Close() error {
+	s.closeOnce.Do(func() { s.closeErr = s.db.Close() })
+	return s.closeErr
+}
 
 func (s *Store) migrate() error {
 	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS request_log (
@@ -117,9 +124,12 @@ func (r *Recorder) loop() {
 	}
 }
 
+// Close 停止接收并排空缓冲；closeDB 为 true 时同时关闭底层连接
+// （Windows 上句柄不关闭会锁住 db 文件，测试清理必需）。
 func (r *Recorder) Close() {
 	close(r.ch)
 	<-r.done
+	_ = r.store.db.Close()
 }
 
 // Store 暴露底层存储（查询用）。

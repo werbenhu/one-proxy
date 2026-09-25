@@ -108,11 +108,21 @@ func TestRecorderAsync(t *testing.T) {
 	s := newTestStore(t)
 	r := NewRecorder(s, 16)
 	r.Record(Record{CreatedAt: time.Now(), ChannelID: "ch-x", ChannelName: "X", ModelRequested: "m", ModelUpstream: "m"})
-	r.Close()
-	rows, err := s.Summary(time.Time{})
-	if err != nil {
-		t.Fatal(err)
+	// 轮询等异步落库（Close 会关库，先查后关）
+	deadline := time.Now().Add(2 * time.Second)
+	var rows []AggRow
+	var err error
+	for time.Now().Before(deadline) {
+		rows, err = s.Summary(time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
+	r.Close()
 	if len(rows) != 1 || rows[0].ChannelID != "ch-x" {
 		t.Fatalf("异步写入: %+v", rows)
 	}
