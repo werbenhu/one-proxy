@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "OneProxy",
+  "outputfilename": "OneProxy",
+  "frontend:install": "pnpm install --frozen-lockfile",
+  "frontend:build": "pnpm build",
+  "frontend:dev:watcher": "pnpm dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "OneProxy"
+  },
+  "info": {
+    "companyName": "OneProxy",
+    "productName": "OneProxy",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright © 2026 OneProxy",
+    "comments": "Local multi-provider LLM proxy"
+  }
+}
