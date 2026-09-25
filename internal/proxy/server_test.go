@@ -1,0 +1,265 @@
+package proxy
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	anthropiccompat "github.com/werbenhu/one-proxy/internal/adapters/anthropiccompat"
+	"github.com/werbenhu/one-proxy/internal/config"
+	"github.com/werbenhu/one-proxy/internal/protocol/anthropic"
+	"github.com/werbenhu/one-proxy/internal/provider"
+)
+
+func newTestServer(t *testing.T, channels []config.Channel) (*httptest.Server, *config.Store) {
+	t.Helper()
+	dir := t.TempDir()
+	store := config.NewStore(dir + "/config.json")
+	cfg := config.Default()
+	cfg.LocalKey = "testkey123"
+	cfg.Channels = channels
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	registry := provider.NewRegistry()
+	for _, ch := range channels {
+		if !ch.Enabled {
+			continue
+		}
+		switch ch.Type {
+		case config.TypeAnthropicCompat:
+			registry.Register(ch.ID, anthropiccompat.New(ch.BaseURL, ch.APIKey))
+		default:
+			t.Fatalf("测试不支持渠道类型: %s", ch.Type)
+		}
+	}
+	srv := NewServer(store, registry)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts, store
+}
+
+func TestAuthRejected(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	resp, err := http.Post(ts.URL+"/v1/messages", "application/json", strings.NewReader(`{"model":"m"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Fatalf("无密钥应 401, got %d", resp.StatusCode)
+	}
+	resp2, _ := http.Post(ts.URL+"/v1/messages", "application/json",
+		strings.NewReader(`{"model":"m"}`))
+	resp2.Body.Close()
+	_ = resp2
+}
+
+func TestModelsAggregation(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer up.Close()
+	channels := []config.Channel{
+		{ID: "ch-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
+			Models: []string{"m1", "m2"}, Enabled: true},
+		{ID: "ch-b", Name: "B", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
+			Models: []string{"m2", "m3"}, Enabled: true},
+		{ID: "ch-c", Name: "C", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
+			Models: []string{"disabled"}, Enabled: false},
+	}
+	ts, _ := newTestServer(t, channels)
+	req, _ := http.NewRequest("GET", ts.URL+"/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("models: %d", resp.StatusCode)
+	}
+	var out struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if len(out.Data) != 3 {
+		t.Fatalf("聚合去重错误: %+v", out.Data)
+	}
+}
+
+func TestMessagesNonStreamEndToEnd(t *testing.T) {
+	var gotBody map[string]json.RawMessage
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(data, &gotBody)
+		_, _ = w.Write([]byte(`{"id":"msg_9","type":"message","role":"assistant","model":"kimi-k3",
+			"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",
+			"usage":{"input_tokens":7,"output_tokens":2}}`))
+	}))
+	defer up.Close()
+	channels := []config.Channel{
+		{ID: "ch-kimi", Name: "Kimi", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "kk",
+			Models: []string{"claude-sonnet-4-6"}, ModelMapping: map[string]string{"claude-sonnet-4-6": "kimi-k3"}, Enabled: true},
+	}
+	ts, _ := newTestServer(t, channels)
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(
+		`{"model":"claude-sonnet-4-6","max_tokens":64,"system":"s","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	req.Header.Set("anthropic-beta", "context-1m-2025-08-07")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("messages: %d", resp.StatusCode)
+	}
+	var out map[string]json.RawMessage
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if string(out["id"]) != `"msg_9"` {
+		t.Fatalf("响应错误: %s", out["id"])
+	}
+	// 上游应看到重写后的 model 与透传的 beta 头在 gotBody 里 model 已映射
+	if string(gotBody["model"]) != `"kimi-k3"` {
+		t.Fatalf("别名映射失败: %s", gotBody["model"])
+	}
+	if string(gotBody["system"]) != `"s"` {
+		t.Fatalf("system 保真失败: %s", gotBody["system"])
+	}
+}
+
+func TestMessagesStreamEndToEnd(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		_, _ = w.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3}}}\n\n"))
+		_, _ = w.Write([]byte("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n"))
+		_, _ = w.Write([]byte("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"))
+		fl.Flush()
+	}))
+	defer up.Close()
+	channels := []config.Channel{
+		{ID: "ch-kimi", Name: "Kimi", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "kk",
+			Models: []string{"m"}, Enabled: true},
+	}
+	ts, _ := newTestServer(t, channels)
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(
+		`{"model":"m","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("x-api-key", "testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("stream: %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("Content-Type: %s", ct)
+	}
+	data, _ := io.ReadAll(resp.Body)
+	s := string(data)
+	if !strings.Contains(s, "event: message_start") || !strings.Contains(s, "event: message_stop") {
+		t.Fatalf("SSE 内容错误: %s", s)
+	}
+}
+
+func TestDirectChannelSyntax(t *testing.T) {
+	var gotPath string
+	var gotModel string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		data, _ := io.ReadAll(r.Body)
+		var m map[string]json.RawMessage
+		_ = json.Unmarshal(data, &m)
+		gotModel = string(m["model"])
+		_, _ = w.Write([]byte(`{"id":"m","role":"assistant","content":[],"usage":{"input_tokens":1}}`))
+	}))
+	defer up.Close()
+	channels := []config.Channel{
+		{ID: "ch-kimi", Name: "Kimi", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "kk",
+			Models: []string{"other"}, Enabled: true},
+	}
+	ts, _ := newTestServer(t, channels)
+	// 直连：ch-kimi/kimi-k3 即使渠道没声明 kimi-k3 也可用（调试语法）
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(
+		`{"model":"ch-kimi/kimi-k3","max_tokens":8,"messages":[]}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("直连失败: %d", resp.StatusCode)
+	}
+	if gotPath != "/v1/messages" || gotModel != `"kimi-k3"` {
+		t.Fatalf("直连重写错误: path=%s model=%s", gotPath, gotModel)
+	}
+}
+
+func TestOpenRouterModelNameNotSplit(t *testing.T) {
+	// openrouter/anthropic/claude-... 不能被当直连语法拆分
+	model, direct := resolveModel("anthropic/claude-sonnet-4.6")
+	if direct != "" || model != "anthropic/claude-sonnet-4.6" {
+		t.Fatalf("org/model 被误拆: %s %s", model, direct)
+	}
+}
+
+func TestUnknownModel(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer up.Close()
+	channels := []config.Channel{
+		{ID: "ch-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
+			Models: []string{"m1"}, Enabled: true},
+	}
+	ts, _ := newTestServer(t, channels)
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(`{"model":"nope","max_tokens":8}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatalf("未知模型应 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestUpstreamErrorPassthrough(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		_, _ = w.Write([]byte(`{"error":"quota"}`))
+	}))
+	defer up.Close()
+	channels := []config.Channel{
+		{ID: "ch-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
+			Models: []string{"m1"}, Enabled: true},
+	}
+	ts, _ := newTestServer(t, channels)
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(`{"model":"m1","max_tokens":8}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 429 {
+		t.Fatalf("上游 429 应透传, got %d", resp.StatusCode)
+	}
+}
+
+// 编译期断言：server_test 引用的类型存在。
+var (
+	_ = bytes.MinRead
+	_ = context.Background
+	_ = time.Second
+	_ anthropic.Event
+)
