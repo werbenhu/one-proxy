@@ -1,0 +1,7 @@
+node_modules/
+frontend/dist/*
+!frontend/dist/index.html
+build/bin/
+*.exe
+one-proxy.db
+*.test
