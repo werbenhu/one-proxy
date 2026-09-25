@@ -30,7 +30,7 @@ func TestInvokeRoundtrip(t *testing.T) {
 	}))
 	defer up.Close()
 
-	a := New(up.URL, "sk-ds")
+	a := New(up.URL, "sk-ds", "")
 	req, _ := anthropic.ParseRequest([]byte(`{"model":"deepseek","max_tokens":64,
 		"system":"be brief","messages":[{"role":"user","content":"hi"}],"temperature":0.5}`))
 	resp, err := a.Invoke(context.Background(), req)
@@ -76,7 +76,7 @@ func TestStreamRebuild(t *testing.T) {
 	}))
 	defer up.Close()
 
-	a := New(up.URL, "k")
+	a := New(up.URL, "k", "")
 	req := &anthropic.Request{Model: "ds", MaxTokens: 8, Stream: true,
 		Messages: json.RawMessage(`[{"role":"user","content":"hi"}]`)}
 	ch, err := a.Stream(context.Background(), req)
@@ -112,7 +112,7 @@ func TestErrorMapping(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"message":"bad key"}}`))
 	}))
 	defer up.Close()
-	a := New(up.URL, "k")
+	a := New(up.URL, "k", "")
 	_, err := a.Invoke(context.Background(), &anthropic.Request{Model: "m", MaxTokens: 8,
 		Messages: json.RawMessage(`[{"role":"user","content":"x"}]`)})
 	if err == nil || a.NormalizeError(err) != provider.ErrKindAuth {
@@ -128,7 +128,7 @@ func TestModels(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-chat"}]}`))
 	}))
 	defer up.Close()
-	a := New(up.URL, "k")
+	a := New(up.URL, "k", "")
 	models, err := a.Models(context.Background())
 	if err != nil {
 		t.Fatal(err)

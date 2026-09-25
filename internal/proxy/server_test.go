@@ -38,7 +38,7 @@ func newTestServer(t *testing.T, channels []config.Channel) (*httptest.Server, *
 		}
 		switch ch.Type {
 		case config.TypeAnthropicCompat:
-			registry.Register(ch.ID, anthropiccompat.New(ch.BaseURL, ch.APIKey))
+			registry.Register(ch.ID, anthropiccompat.New(ch.BaseURL, ch.APIKey, ""))
 		default:
 			t.Fatalf("测试不支持渠道类型: %s", ch.Type)
 		}
@@ -327,7 +327,7 @@ func TestUsageRecording(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	registry.Register("ch-u", anthropiccompat.New(up.URL, "k"))
+	registry.Register("ch-u", anthropiccompat.New(up.URL, "k", ""))
 	srv := NewServer(store, registry)
 	dbPath := filepath.Join(t.TempDir(), "u2.db")
 	if err := srv.AttachUsage(dbPath, "anthropic"); err != nil {
@@ -399,7 +399,7 @@ func TestResponsesEndpointDirect(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	registry.Register("ch-grok", grokadapter.New("xk", up.URL))
+	registry.Register("ch-grok", grokadapter.New("xk", up.URL, ""))
 	srv := NewServer(store, registry)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -463,8 +463,8 @@ func TestResponsesOpenAICompatibleFailover(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	registry.Register("pv-a", openaicompat.New(first.URL+"/v1", "key-a"))
-	registry.Register("pv-b", openaicompat.New(second.URL+"/v1", "key-b"))
+	registry.Register("pv-a", openaicompat.New(first.URL+"/v1", "key-a", ""))
+	registry.Register("pv-b", openaicompat.New(second.URL+"/v1", "key-b", ""))
 	server := NewServer(store, registry)
 	ts := httptest.NewServer(server.Handler())
 	defer ts.Close()

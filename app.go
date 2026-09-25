@@ -77,9 +77,9 @@ func rebuildAdapters(cfg config.Config, registry *provider.Registry) {
 		}
 		switch p.Type {
 		case config.TypeAnthropicCompat:
-			registry.Register(p.ID, anthropiccompat.New(p.BaseURL, p.APIKey))
+			registry.Register(p.ID, anthropiccompat.New(p.BaseURL, p.APIKey, p.ProxyURL))
 		case config.TypeOpenAICompat:
-			registry.Register(p.ID, openaicompat.New(p.BaseURL, p.APIKey))
+			registry.Register(p.ID, openaicompat.New(p.BaseURL, p.APIKey, p.ProxyURL))
 		case config.TypeGrok:
 			registerGrok(p, registry)
 		}
@@ -93,14 +93,14 @@ func registerGrok(ch config.ProviderAccount, registry *provider.Registry) {
 	}
 	_ = json.Unmarshal(ch.Extra, &extra)
 	if extra.Mode == "oauth" {
-		adapter := grokadapter.NewOAuth(ch.BaseURL,
+		adapter := grokadapter.NewOAuth(ch.BaseURL, ch.ProxyURL,
 			func() []byte { return currentExtra(ch.ID) },
 			func(data []byte) error { return saveExtra(ch.ID, data) },
 			nil)
 		registry.Register(ch.ID, adapter)
 		return
 	}
-	registry.Register(ch.ID, grokadapter.New(ch.APIKey, ch.BaseURL))
+	registry.Register(ch.ID, grokadapter.New(ch.APIKey, ch.BaseURL, ch.ProxyURL))
 }
 
 // currentExtra/saveExtra 由 App 注入的配置访问器（启动时装配）。
@@ -257,6 +257,14 @@ func (a *App) SaveSettings(v service.SettingsView) error { return a.svc.SaveSett
 
 func (a *App) GetUsageSummary(rangeKey string) ([]usage.AggRow, error) {
 	return a.svc.UsageSummary(rangeKey)
+}
+
+func (a *App) GetUsageDaily(rangeKey string) ([]usage.ModelDayTokens, error) {
+	return a.svc.UsageDaily(rangeKey)
+}
+
+func (a *App) GetProviderUsage(id string) service.ProviderUsageView {
+	return a.svc.ProviderUsage(id)
 }
 
 func (a *App) TestChannel(id string) error { return a.svc.TestChannel(id) }

@@ -27,6 +27,7 @@ type ProviderView struct {
 	BalanceKind    string `json:"balanceKind"`
 	BalanceURL     string `json:"balanceUrl"`
 	BalanceKeyHint string `json:"balanceKeyHint"`
+	ProxyURL       string `json:"proxyUrl"`
 	Enabled        bool   `json:"enabled"`
 	Status         string `json:"status"`
 	CoolingUntil   string `json:"coolingUntil,omitempty"`
@@ -53,6 +54,8 @@ type SettingsView struct {
 	ListenPort int    `json:"listenPort"`
 	LocalKey   string `json:"localKey"` // 本地密钥需要展示给用户复制
 	RetainDays int    `json:"retainDays"`
+	Theme      string `json:"theme"`    // dark | light
+	Language   string `json:"language"` // zh | en
 	Running    bool   `json:"running"`
 }
 
@@ -135,6 +138,7 @@ func (s *Service) Providers() []ProviderView {
 			ID: p.ID, Name: p.Name, Vendor: p.Vendor, Type: p.Type, BaseURL: p.BaseURL,
 			APIKeyHint: config.MaskKey(p.APIKey), HasExtra: len(p.Extra) > 0,
 			BalanceKind: p.BalanceKind, BalanceURL: p.BalanceURL, BalanceKeyHint: config.MaskKey(p.BalanceKey), Enabled: p.Enabled,
+			ProxyURL:    p.ProxyURL,
 			TodayTokens: today[p.ID], WeekTokens: week[p.ID], MonthTokens: month[p.ID],
 		}
 		if p.Type == config.TypeGrok {
@@ -341,6 +345,7 @@ func (s *Service) Settings() SettingsView {
 	return SettingsView{
 		ListenHost: cfg.ListenHost, ListenPort: cfg.ListenPort,
 		LocalKey: cfg.LocalKey, RetainDays: cfg.RetainDays,
+		Theme: cfg.Theme, Language: cfg.Language,
 	}
 }
 
@@ -348,6 +353,14 @@ func (s *Service) SaveSettings(v SettingsView) error {
 	return s.store.Update(func(c *config.Config) {
 		c.ListenHost, c.ListenPort = v.ListenHost, v.ListenPort
 		c.LocalKey, c.RetainDays = v.LocalKey, v.RetainDays
+		switch v.Theme {
+		case "dark", "light":
+			c.Theme = v.Theme
+		}
+		switch v.Language {
+		case "zh", "en":
+			c.Language = v.Language
+		}
 	})
 }
 
@@ -357,6 +370,28 @@ func (s *Service) UsageSummary(rangeKey string) ([]usage.AggRow, error) {
 	if us == nil {
 		return []usage.AggRow{}, nil
 	}
+	since, err := usageSince(rangeKey)
+	if err != nil {
+		return nil, err
+	}
+	return us.Summary(since)
+}
+
+// UsageDaily 全部提供商逐日 × 上游模型 token（用量页趋势图）。
+func (s *Service) UsageDaily(rangeKey string) ([]usage.ModelDayTokens, error) {
+	us := s.server.UsageStore()
+	if us == nil {
+		return []usage.ModelDayTokens{}, nil
+	}
+	since, err := usageSince(rangeKey)
+	if err != nil {
+		return nil, err
+	}
+	return us.DailyByModel(since)
+}
+
+// usageSince 解析用量页时间范围（today/7d/30d/all）。
+func usageSince(rangeKey string) (time.Time, error) {
 	var since time.Time
 	switch rangeKey {
 	case "today":
@@ -368,9 +403,45 @@ func (s *Service) UsageSummary(rangeKey string) ([]usage.AggRow, error) {
 		since = time.Now().AddDate(0, 0, -30)
 	case "all", "":
 	default:
-		return nil, fmt.Errorf("无效时间范围 %q", rangeKey)
+		return since, fmt.Errorf("无效时间范围 %q", rangeKey)
 	}
-	return us.Summary(since)
+	return since, nil
+}
+
+// ProviderUsageView 单提供商用量详情（列表「详情」弹窗）。
+type ProviderUsageView struct {
+	TodayTokens int64                  `json:"todayTokens"`
+	WeekTokens  int64                  `json:"weekTokens"`
+	MonthTokens int64                  `json:"monthTokens"`
+	TotalTokens int64                  `json:"totalTokens"` // 累计（日志保留期内）
+	Daily       []usage.DayTokens      `json:"daily"`       // 近 12 个月逐日，热力图用
+	ModelDaily  []usage.ModelDayTokens `json:"modelDaily"`  // 近 30 天逐日×上游模型，趋势图用
+	Models      []usage.ModelStat      `json:"models"`      // 按上游模型的累计消耗
+}
+
+// ProviderUsage 汇总某提供商的用量详情；用量存储不可用时返回空视图。
+func (s *Service) ProviderUsage(id string) ProviderUsageView {
+	v := ProviderUsageView{Daily: []usage.DayTokens{}, ModelDaily: []usage.ModelDayTokens{}, Models: []usage.ModelStat{}}
+	us := s.server.UsageStore()
+	if us == nil {
+		return v
+	}
+	now := time.Now()
+	today, week, month, _ := us.ProviderTokens(now)
+	v.TodayTokens, v.WeekTokens, v.MonthTokens = today[id], week[id], month[id]
+	if daily, err := us.ProviderDaily(id, now.AddDate(-1, 0, 0)); err == nil {
+		v.Daily = daily
+	}
+	if modelDaily, err := us.ProviderDailyByModel(id, now.AddDate(0, 0, -30)); err == nil {
+		v.ModelDaily = modelDaily
+	}
+	if models, err := us.ProviderModelStats(id, time.Time{}); err == nil {
+		v.Models = models
+		for _, m := range models {
+			v.TotalTokens += m.TotalTokens
+		}
+	}
+	return v
 }
 
 func (s *Service) ProviderModels(id string) ([]provider.ModelInfo, error) {

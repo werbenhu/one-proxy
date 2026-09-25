@@ -102,7 +102,7 @@ func TestChatEndpointToOpenAIUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	registry.Register("ch-ds", openaicompat.New(up.URL, "k"))
+	registry.Register("ch-ds", openaicompat.New(up.URL, "k", ""))
 	srv := NewServer(store, registry)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -197,7 +197,7 @@ func TestAnthropicEndpointToOpenAIUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	registry.Register("ch-ds", openaicompat.New(up.URL, "k"))
+	registry.Register("ch-ds", openaicompat.New(up.URL, "k", ""))
 	srv := NewServer(store, registry)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()

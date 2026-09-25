@@ -38,12 +38,20 @@ export function GetProviderModels(arg1) {
   return window['go']['main']['App']['GetProviderModels'](arg1);
 }
 
+export function GetProviderUsage(arg1) {
+  return window['go']['main']['App']['GetProviderUsage'](arg1);
+}
+
 export function GetProviders() {
   return window['go']['main']['App']['GetProviders']();
 }
 
 export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
+}
+
+export function GetUsageDaily(arg1) {
+  return window['go']['main']['App']['GetUsageDaily'](arg1);
 }
 
 export function GetUsageSummary(arg1) {

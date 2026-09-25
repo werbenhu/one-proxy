@@ -263,16 +263,18 @@ func (s *Store) ProviderToday(now time.Time) (map[string]int64, error) {
 	return today, err
 }
 
+// totalTokens 单次请求的计费 token 口径（与列表今日用量一致）。
+const totalTokens = "COALESCE(input_tokens,0)+COALESCE(output_tokens,0)+COALESCE(cache_read_tokens,0)"
+
 // ProviderTokens 按真实上游账户汇总今日 / 本周（周一起）/ 本月的 Token。
 func (s *Store) ProviderTokens(now time.Time) (today, week, month map[string]int64, err error) {
 	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	weekStart := todayStart.AddDate(0, 0, -(int(now.Weekday())+6)%7)
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	const tokens = "COALESCE(input_tokens,0)+COALESCE(output_tokens,0)+COALESCE(cache_read_tokens,0)"
 	rows, err := s.db.Query(`SELECT provider_id,
-		SUM(CASE WHEN created_at >= ? THEN `+tokens+` ELSE 0 END),
-		SUM(CASE WHEN created_at >= ? THEN `+tokens+` ELSE 0 END),
-		SUM(`+tokens+`)
+		SUM(CASE WHEN created_at >= ? THEN `+totalTokens+` ELSE 0 END),
+		SUM(CASE WHEN created_at >= ? THEN `+totalTokens+` ELSE 0 END),
+		SUM(`+totalTokens+`)
 		FROM request_log WHERE created_at >= ? AND provider_id != '' GROUP BY provider_id`,
 		todayStart.Unix(), weekStart.Unix(), monthStart.Unix())
 	if err != nil {
@@ -289,6 +291,112 @@ func (s *Store) ProviderTokens(now time.Time) (today, week, month map[string]int
 		today[id], week[id], month[id] = daySum, weekSum, monthSum
 	}
 	return today, week, month, rows.Err()
+}
+
+// DayTokens 单个自然日（本地时区）的 token 量。
+type DayTokens struct {
+	Day    string `json:"day"`
+	Tokens int64  `json:"tokens"`
+}
+
+// ModelDayTokens 单个自然日 × 上游模型的 token 量。
+type ModelDayTokens struct {
+	Day    string `json:"day"`
+	Model  string `json:"model"`
+	Tokens int64  `json:"tokens"`
+}
+
+// ProviderDaily 某提供商 since 以来的逐日 token（详情弹窗热力图用）。
+func (s *Store) ProviderDaily(providerID string, since time.Time) ([]DayTokens, error) {
+	rows, err := s.db.Query(`SELECT strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime'), SUM(`+totalTokens+`)
+		FROM request_log WHERE provider_id = ? AND created_at >= ? GROUP BY 1 ORDER BY 1`, providerID, since.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("逐日用量查询: %w", err)
+	}
+	defer rows.Close()
+	out := []DayTokens{}
+	for rows.Next() {
+		var r DayTokens
+		if err := rows.Scan(&r.Day, &r.Tokens); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ProviderDailyByModel 某提供商 since 以来的逐日 × 上游模型 token（趋势图用）。
+func (s *Store) ProviderDailyByModel(providerID string, since time.Time) ([]ModelDayTokens, error) {
+	rows, err := s.db.Query(`SELECT strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime'), model_upstream, SUM(`+totalTokens+`)
+		FROM request_log WHERE provider_id = ? AND created_at >= ? GROUP BY 1, 2 ORDER BY 1`, providerID, since.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("逐日模型用量查询: %w", err)
+	}
+	defer rows.Close()
+	out := []ModelDayTokens{}
+	for rows.Next() {
+		var r ModelDayTokens
+		if err := rows.Scan(&r.Day, &r.Model, &r.Tokens); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DailyByModel 全部提供商 since 以来的逐日 × 上游模型 token（用量页趋势图用）。
+func (s *Store) DailyByModel(since time.Time) ([]ModelDayTokens, error) {
+	rows, err := s.db.Query(`SELECT strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime'), model_upstream, SUM(`+totalTokens+`)
+		FROM request_log WHERE created_at >= ? GROUP BY 1, 2 ORDER BY 1`, since.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("逐日模型用量查询: %w", err)
+	}
+	defer rows.Close()
+	out := []ModelDayTokens{}
+	for rows.Next() {
+		var r ModelDayTokens
+		if err := rows.Scan(&r.Day, &r.Model, &r.Tokens); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ModelStat 单上游模型的累计消耗。
+type ModelStat struct {
+	Model        string `json:"model"`
+	Requests     int64  `json:"requests"`
+	InputTokens  int64  `json:"inputTokens"`
+	OutputTokens int64  `json:"outputTokens"`
+	CacheRead    int64  `json:"cacheReadTokens"`
+	TotalTokens  int64  `json:"totalTokens"`
+}
+
+// ProviderModelStats 某提供商按上游模型聚合的累计消耗（since 为零值表示全部），按总量降序。
+func (s *Store) ProviderModelStats(providerID string, since time.Time) ([]ModelStat, error) {
+	where := "provider_id = ?"
+	args := []any{providerID}
+	if !since.IsZero() {
+		where += " AND created_at >= ?"
+		args = append(args, since.Unix())
+	}
+	rows, err := s.db.Query(`SELECT model_upstream, COUNT(*),
+		SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens), SUM(`+totalTokens+`)
+		FROM request_log WHERE `+where+` GROUP BY model_upstream ORDER BY SUM(`+totalTokens+`) DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("按模型用量汇总: %w", err)
+	}
+	defer rows.Close()
+	out := []ModelStat{}
+	for rows.Next() {
+		var r ModelStat
+		if err := rows.Scan(&r.Model, &r.Requests, &r.InputTokens, &r.OutputTokens, &r.CacheRead, &r.TotalTokens); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // Cleanup 删除保留期外的记录，返回删除行数。

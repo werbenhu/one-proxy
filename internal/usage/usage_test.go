@@ -126,6 +126,66 @@ func TestProviderTodayAcrossChannels(t *testing.T) {
 	}
 }
 
+func TestProviderDailyAndByModel(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	yesterday := now.AddDate(0, 0, -1)
+	for _, rec := range []Record{
+		{CreatedAt: now, ProviderID: "pv-one", ChannelID: "ch-a", ChannelName: "A", ModelUpstream: "glm-5.3", InputTokens: 7, OutputTokens: 3},
+		{CreatedAt: now, ProviderID: "pv-one", ChannelID: "ch-a", ChannelName: "A", ModelUpstream: "grok-4.6", InputTokens: 5},
+		{CreatedAt: yesterday, ProviderID: "pv-one", ChannelID: "ch-a", ChannelName: "A", ModelUpstream: "glm-5.3", InputTokens: 2, CacheReadTokens: 4},
+		{CreatedAt: now, ProviderID: "pv-two", ChannelID: "ch-b", ChannelName: "B", ModelUpstream: "glm-5.3", InputTokens: 100},
+	} {
+		if err := s.Insert(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	daily, err := s.ProviderDaily("pv-one", now.AddDate(0, 0, -7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(daily) != 2 {
+		t.Fatalf("逐日行数: %+v", daily)
+	}
+	byDay := map[string]int64{}
+	for _, d := range daily {
+		byDay[d.Day] = d.Tokens
+	}
+	todayKey := now.Format("2006-01-02")
+	yesterdayKey := yesterday.Format("2006-01-02")
+	if byDay[todayKey] != 15 || byDay[yesterdayKey] != 6 {
+		t.Fatalf("逐日汇总错误: %+v", byDay)
+	}
+	byModel, err := s.ProviderDailyByModel("pv-one", now.AddDate(0, 0, -7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byModel) != 3 {
+		t.Fatalf("逐日模型行数: %+v", byModel)
+	}
+	totals := map[string]int64{}
+	for _, r := range byModel {
+		totals[r.Model] += r.Tokens
+	}
+	if totals["glm-5.3"] != 16 || totals["grok-4.6"] != 5 {
+		t.Fatalf("按模型汇总错误: %+v", totals)
+	}
+	stats, err := s.ProviderModelStats("pv-one", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats) != 2 {
+		t.Fatalf("模型统计行数: %+v", stats)
+	}
+	if stats[0].Model != "glm-5.3" || stats[0].TotalTokens != 16 || stats[0].Requests != 2 ||
+		stats[0].InputTokens != 9 || stats[0].OutputTokens != 3 || stats[0].CacheRead != 4 {
+		t.Fatalf("模型统计错误: %+v", stats[0])
+	}
+	if stats[1].Model != "grok-4.6" || stats[1].TotalTokens != 5 {
+		t.Fatalf("模型统计排序错误: %+v", stats)
+	}
+}
+
 func TestMigrateLegacyUsageProviderID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.db")
 	db, err := sql.Open("sqlite", path)

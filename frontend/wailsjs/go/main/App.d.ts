@@ -23,9 +23,13 @@ export function GetProviderKeys(arg1:string):Promise<service.ProviderKeysView>;
 
 export function GetProviderModels(arg1:string):Promise<Array<provider.ModelInfo>>;
 
+export function GetProviderUsage(arg1:string):Promise<service.ProviderUsageView>;
+
 export function GetProviders():Promise<Array<service.ProviderView>>;
 
 export function GetSettings():Promise<service.SettingsView>;
+
+export function GetUsageDaily(arg1:string):Promise<Array<usage.ModelDayTokens>>;
 
 export function GetUsageSummary(arg1:string):Promise<Array<usage.AggRow>>;
 

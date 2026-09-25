@@ -77,10 +77,11 @@ type Adapter struct {
 	onRefresh  func() // 测试钩子
 }
 
-// New apiKey 模式。baseURL 为空用官方默认（测试注入假上游）。
-func New(apiKey, baseURL string) *Adapter {
+// New apiKey 模式。baseURL 为空用官方默认（测试注入假上游）；
+// proxyURL 为该提供商专用 HTTP 代理（空走系统环境代理）。
+func New(apiKey, baseURL, proxyURL string) *Adapter {
 	a := &Adapter{apiKey: apiKey}
-	a.http = defaultHTTPClient()
+	a.http = provider.Client(proxyURL)
 	a.creds = staticCredential{token: apiKey}
 	a.client = upstream.NewClient(a.http, a.creds)
 	a.client.SetBaseURLs(baseURL, baseURL)
@@ -88,21 +89,16 @@ func New(apiKey, baseURL string) *Adapter {
 }
 
 // NewOAuth OAuth 模式：extra 读写由回调提供（配置层注入，token 刷新落配置）。
-func NewOAuth(baseURL string, getExtra func() []byte, saveExtra func([]byte) error, onStatus func(error)) *Adapter {
+func NewOAuth(baseURL, proxyURL string, getExtra func() []byte, saveExtra func([]byte) error, onStatus func(error)) *Adapter {
 	a := &Adapter{}
-	a.http = defaultHTTPClient()
+	a.http = provider.Client(proxyURL)
 	store := &tokenStore{getExtra: getExtra, saveExtra: saveExtra}
 	a.oauthStore = store
-	source := auth.NewSource(oauthRefresher{}, store)
+	source := auth.NewSource(oauthRefresher{client: a.http}, store)
 	a.creds = oauthCredential{source: source, onStatus: onStatus}
 	a.client = upstream.NewClient(a.http, a.creds)
 	a.client.SetBaseURLs(baseURL, baseURL)
 	return a
-}
-
-func defaultHTTPClient() *http.Client {
-	// 复用 upstream.NewClient 内部默认 transport 的参数
-	return &http.Client{}
 }
 
 type staticCredential struct{ token string }
@@ -127,10 +123,10 @@ func (o oauthCredential) Authorization(ctx context.Context) (upstream.Authorizat
 	return upstream.Authorization{Mode: upstream.ModeOAuth, Token: token}, nil
 }
 
-type oauthRefresher struct{}
+type oauthRefresher struct{ client *http.Client }
 
-func (oauthRefresher) Refresh(ctx context.Context, refreshToken string) (auth.Token, error) {
-	client := auth.NewOAuthClient(nil)
+func (r oauthRefresher) Refresh(ctx context.Context, refreshToken string) (auth.Token, error) {
+	client := auth.NewOAuthClient(r.client)
 	return client.Refresh(ctx, refreshToken)
 }
 

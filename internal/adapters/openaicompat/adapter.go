@@ -10,27 +10,18 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/werbenhu/one-proxy/internal/protocol/anthropic"
 	"github.com/werbenhu/one-proxy/internal/protocol/convert"
 	"github.com/werbenhu/one-proxy/internal/provider"
 )
 
-func New(baseURL, apiKey string) *Adapter {
-	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          64,
-		MaxIdleConnsPerHost:   32,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
-	}
+// New 工厂：proxyURL 为该提供商专用 HTTP 代理（空走系统环境代理）。
+func New(baseURL, apiKey, proxyURL string) *Adapter {
 	return &Adapter{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
-		http:    &http.Client{Transport: transport},
+		http:    &http.Client{Transport: provider.Transport(proxyURL)},
 	}
 }
 

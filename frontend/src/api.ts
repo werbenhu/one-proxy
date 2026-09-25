@@ -10,13 +10,42 @@ export interface ProviderView {
   balanceKind: string
   balanceUrl: string
   balanceKeyHint: string
+  proxyUrl: string
   enabled: boolean
   status: string
   coolingUntil?: string
   failReason?: string
   todayTokens: number
+}
+
+export interface DayTokens {
+  day: string
+  tokens: number
+}
+
+export interface ModelDayTokens {
+  day: string
+  model: string
+  tokens: number
+}
+
+export interface ModelStat {
+  model: string
+  requests: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  totalTokens: number
+}
+
+export interface ProviderUsageView {
+  todayTokens: number
   weekTokens: number
   monthTokens: number
+  totalTokens: number
+  daily: DayTokens[]
+  modelDaily: ModelDayTokens[]
+  models: ModelStat[]
 }
 
 export interface ProviderInput {
@@ -31,6 +60,7 @@ export interface ProviderInput {
   BalanceKind: string
   BalanceURL: string
   BalanceKey: string
+  ProxyURL: string
   Enabled: boolean
 }
 
@@ -92,6 +122,8 @@ export interface SettingsView {
   listenPort: number
   localKey: string
   retainDays: number
+  theme: string
+  language: string
 }
 
 export interface AggRow {
@@ -135,6 +167,8 @@ declare global {
       GetSettings(): Promise<SettingsView>
       SaveSettings(v: SettingsView): Promise<void>
       GetUsageSummary(rangeKey: string): Promise<AggRow[]>
+      GetUsageDaily(rangeKey: string): Promise<ModelDayTokens[]>
+      GetProviderUsage(id: string): Promise<ProviderUsageView>
       StartGrokDeviceAuth(id: string): Promise<DeviceAuthInfo>
       CompleteGrokDeviceAuth(id: string, deviceCode: string): Promise<void>
     } } }

@@ -33,7 +33,7 @@ func TestInvokeRoundtrip(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	adapter := New(upstream.URL, "sk-test")
+	adapter := New(upstream.URL, "sk-test", "")
 	req, err := anthropic.ParseRequest([]byte(`{"model":"claude-sonnet-4-6","max_tokens":100,
 		"system":"be brief","messages":[{"role":"user","content":"hi"}],"top_k":7}`))
 	if err != nil {
@@ -72,7 +72,7 @@ func TestHeaderForwarding(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	adapter := New(upstream.URL, "k")
+	adapter := New(upstream.URL, "k", "")
 	req := &anthropic.Request{Model: "m", MaxTokens: 8, Header: http.Header{}}
 	req.Header.Set("anthropic-beta", "context-1m-2025-08-07")
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -106,7 +106,7 @@ func TestStreamEvents(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	adapter := New(upstream.URL, "k")
+	adapter := New(upstream.URL, "k", "")
 	req, _ := anthropic.ParseRequest([]byte(`{"model":"m","max_tokens":8,"stream":true,"messages":[]}`))
 	ch, err := adapter.Stream(context.Background(), req)
 	if err != nil {
@@ -144,7 +144,7 @@ func TestErrorClassification(t *testing.T) {
 			w.WriteHeader(c.status)
 			_, _ = w.Write([]byte(`{"error":{"message":"x"}}`))
 		}))
-		adapter := New(upstream.URL, "k")
+		adapter := New(upstream.URL, "k", "")
 		req := &anthropic.Request{Model: "m", MaxTokens: 8}
 		_, err := adapter.Invoke(context.Background(), req)
 		if err == nil {
@@ -164,7 +164,7 @@ func TestStreamUpstreamError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"quota"}`))
 	}))
 	defer upstream.Close()
-	adapter := New(upstream.URL, "k")
+	adapter := New(upstream.URL, "k", "")
 	req := &anthropic.Request{Model: "m", MaxTokens: 8, Stream: true}
 	_, err := adapter.Stream(context.Background(), req)
 	if err == nil || adapter.NormalizeError(err) != provider.ErrKindQuota {
@@ -180,7 +180,7 @@ func TestModels(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":[{"id":"kimi-k3"},{"id":"kimi-k2.7-code"}]}`))
 	}))
 	defer upstream.Close()
-	adapter := New(upstream.URL, "k")
+	adapter := New(upstream.URL, "k", "")
 	models, err := adapter.Models(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +202,7 @@ func TestStreamIdleTimeout(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	adapter := New(upstream.URL, "k")
+	adapter := New(upstream.URL, "k", "")
 	req := &anthropic.Request{Model: "m", MaxTokens: 8, Stream: true}
 	ch, err := adapter.Stream(context.Background(), req)
 	if err != nil {

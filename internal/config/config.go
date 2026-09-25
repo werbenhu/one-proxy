@@ -35,6 +35,7 @@ type ProviderAccount struct {
 	BalanceKind string `json:"balanceKind,omitempty"`
 	BalanceURL  string `json:"balanceUrl,omitempty"`
 	BalanceKey  string `json:"balanceKey,omitempty"`
+	ProxyURL    string `json:"proxyUrl,omitempty"` // 该提供商专用 HTTP 代理，空则走系统环境代理
 	Enabled     bool   `json:"enabled"`
 }
 
@@ -71,6 +72,8 @@ type Config struct {
 	ListenPort int               `json:"listenPort"`
 	LocalKey   string            `json:"localKey"`
 	RetainDays int               `json:"retainDays"`
+	Theme      string            `json:"theme,omitempty"`    // dark | light（默认 dark）
+	Language   string            `json:"language,omitempty"` // zh | en（默认 zh）
 	Providers  []ProviderAccount `json:"providers"`
 	Channels   []Channel         `json:"channels"`
 }

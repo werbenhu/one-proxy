@@ -37,7 +37,7 @@ func TestInvokeRoundtrip(t *testing.T) {
 	up := responsesUpstream(t, &hit, &path)
 	defer up.Close()
 
-	a := New("xai-key", up.URL)
+	a := New("xai-key", up.URL, "")
 	req, _ := anthropic.ParseRequest([]byte(`{"model":"grok-4.5","max_tokens":64,
 		"messages":[{"role":"user","content":"hi"}]}`))
 	resp, err := a.Invoke(context.Background(), req)
@@ -66,7 +66,7 @@ func TestForwardRawProtocols(t *testing.T) {
 	var path string
 	up := responsesUpstream(t, &hit, &path)
 	defer up.Close()
-	a := New("xai-key", up.URL)
+	a := New("xai-key", up.URL, "")
 
 	// chat 直通
 	result, err := a.ForwardRaw(context.Background(), provider.ProtocolChat,
@@ -112,7 +112,7 @@ func TestStreamEvents(t *testing.T) {
 		}
 	}))
 	defer up.Close()
-	a := New("k", up.URL)
+	a := New("k", up.URL, "")
 	req := &anthropic.Request{Model: "grok-4.5", MaxTokens: 8, Stream: true,
 		Messages: json.RawMessage(`[{"role":"user","content":"hi"}]`)}
 	ch, err := a.Stream(context.Background(), req)
@@ -139,7 +139,7 @@ func TestErrorClassification(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"quota"}`))
 	}))
 	defer up.Close()
-	a := New("k", up.URL)
+	a := New("k", up.URL, "")
 	_, err := a.Invoke(context.Background(), &anthropic.Request{Model: "grok-4.5", MaxTokens: 8,
 		Messages: json.RawMessage(`[{"role":"user","content":"x"}]`)})
 	if err == nil || a.NormalizeError(err) != provider.ErrKindQuota {
@@ -152,7 +152,7 @@ func TestModels(t *testing.T) {
 	var path string
 	up := responsesUpstream(t, &hit, &path)
 	defer up.Close()
-	a := New("k", up.URL)
+	a := New("k", up.URL, "")
 	models, err := a.Models(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestModels(t *testing.T) {
 // OAuth 状态回调：凭据不可用时触发。
 func TestOAuthCredentialMissing(t *testing.T) {
 	var statusErr error
-	a := NewOAuth("", func() []byte { return []byte(`{"mode":"oauth"}`) }, func([]byte) error { return nil }, func(err error) { statusErr = err })
+	a := NewOAuth("", "", func() []byte { return []byte(`{"mode":"oauth"}`) }, func([]byte) error { return nil }, func(err error) { statusErr = err })
 	_, err := a.Invoke(context.Background(), &anthropic.Request{Model: "grok-4.5", MaxTokens: 8,
 		Messages: json.RawMessage(`[{"role":"user","content":"x"}]`)})
 	if err == nil {

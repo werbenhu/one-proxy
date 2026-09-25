@@ -2,50 +2,70 @@
   <div class="settings-page">
     <div class="page-head">
       <div>
-        <h2>设置</h2>
+        <h2>{{ t('nav.settings') }}</h2>
       </div>
     </div>
 
     <div class="settings-grid">
-      <section class="card">
-        <h3 class="card-title">基础设置</h3>
+      <section class="card card-wide">
+        <h3 class="card-title">{{ t('settings.interface') }}</h3>
         <div class="row">
           <div class="field">
-            <label>监听地址</label>
+            <label>{{ t('settings.theme') }}</label>
+            <div class="segmented">
+              <button type="button" :class="{ on: settings.theme !== 'light' }" @click="previewTheme('dark')">{{ t('settings.themeDark') }}</button>
+              <button type="button" :class="{ on: settings.theme === 'light' }" @click="previewTheme('light')">{{ t('settings.themeLight') }}</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>{{ t('settings.language') }}</label>
+            <div class="segmented">
+              <button type="button" :class="{ on: settings.language !== 'en' }" @click="previewLocale('zh')">中文</button>
+              <button type="button" :class="{ on: settings.language === 'en' }" @click="previewLocale('en')">English</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3 class="card-title">{{ t('settings.base') }}</h3>
+        <div class="row">
+          <div class="field">
+            <label>{{ t('settings.listenHost') }}</label>
             <input v-model="settings.listenHost" />
           </div>
           <div class="field">
-            <label>端口</label>
+            <label>{{ t('settings.listenPort') }}</label>
             <input v-model.number="settings.listenPort" type="number" />
           </div>
         </div>
         <div class="field">
-          <label>本地代理密钥（客户端 API Key）</label>
+          <label>{{ t('settings.localKey') }}</label>
           <div class="key-field">
             <input v-model="settings.localKey" :type="showKey ? 'text' : 'password'" />
-            <button type="button" class="icon-btn" :title="showKey ? '隐藏' : '显示'" @click="showKey = !showKey">
-              {{ showKey ? '隐藏' : '显示' }}
+            <button type="button" class="icon-btn" :title="showKey ? t('common.hide') : t('common.show')" @click="showKey = !showKey">
+              {{ showKey ? t('common.hide') : t('common.show') }}
             </button>
           </div>
         </div>
         <div class="field">
-          <label>日志保留天数</label>
+          <label>{{ t('settings.retainDays') }}</label>
           <input v-model.number="settings.retainDays" type="number" min="1" />
         </div>
         <div class="actions card-actions">
-          <button class="primary" @click="save">保存</button>
-          <span v-if="saved" class="save-ok">已保存。监听地址修改后重启应用生效。</span>
+          <button class="primary" @click="save">{{ t('common.save') }}</button>
+          <span v-if="saved" class="save-ok">{{ t('settings.saved') }}</span>
         </div>
         <p v-if="error" class="error-text">{{ error }}</p>
       </section>
 
       <section class="card">
-        <h3 class="card-title">客户端接入</h3>
+        <h3 class="card-title">{{ t('settings.clients') }}</h3>
         <div v-for="client in clients" :key="client.name" class="client-block">
           <div class="client-head">
             <span class="client-name">{{ client.name }}</span>
             <button type="button" class="icon-btn" @click="copy(client)">
-              {{ copied === client.name ? '已复制' : '复制' }}
+              {{ copied === client.name ? t('common.copied') : t('common.copy') }}
             </button>
           </div>
           <pre class="client-env">{{ client.env }}</pre>
@@ -58,8 +78,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { app, type SettingsView } from '../api'
+import { applyLocale, applyTheme, t } from '../i18n'
 
-const settings = ref<SettingsView>({ listenHost: '127.0.0.1', listenPort: 8280, localKey: '', retainDays: 90 })
+const settings = ref<SettingsView>({ listenHost: '127.0.0.1', listenPort: 8280, localKey: '', retainDays: 90, theme: 'dark', language: 'zh' })
 const saved = ref(false)
 const error = ref('')
 const showKey = ref(false)
@@ -68,6 +89,15 @@ const copied = ref('')
 onMounted(async () => {
   settings.value = await app().GetSettings()
 })
+
+function previewTheme(value: string) {
+  settings.value.theme = value
+  applyTheme(value)
+}
+function previewLocale(value: string) {
+  settings.value.language = value
+  applyLocale(value)
+}
 
 const clients = computed(() => {
   const { listenHost, listenPort, localKey } = settings.value
@@ -83,7 +113,7 @@ const clients = computed(() => {
     },
     {
       name: 'OpenAI Responses',
-      env: `OPENAI_BASE_URL=${base}/v1\nOPENAI_API_KEY=${localKey}\n# 接口路径：POST /v1/responses`,
+      env: `OPENAI_BASE_URL=${base}/v1\nOPENAI_API_KEY=${localKey}\n# ${t('settings.responsesPath')}`,
     },
   ]
 })
@@ -126,6 +156,10 @@ async function copy(client: { name: string; env: string }) {
   padding: 20px;
 }
 
+.card-wide {
+  grid-column: 1 / -1;
+}
+
 .card-title {
   margin: 0 0 18px;
   font-size: 15px;
@@ -165,7 +199,7 @@ async function copy(client: { name: string; env: string }) {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
-  color: #9dd9ca;
+  color: var(--code);
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 12px;
   line-height: 1.7;

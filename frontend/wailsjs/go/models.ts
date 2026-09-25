@@ -87,6 +87,7 @@ export namespace config {
 	    balanceKind?: string;
 	    balanceUrl?: string;
 	    balanceKey?: string;
+	    proxyUrl?: string;
 	    enabled: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -106,6 +107,7 @@ export namespace config {
 	        this.balanceKind = source["balanceKind"];
 	        this.balanceUrl = source["balanceUrl"];
 	        this.balanceKey = source["balanceKey"];
+	        this.proxyUrl = source["proxyUrl"];
 	        this.enabled = source["enabled"];
 	    }
 	}
@@ -297,6 +299,48 @@ export namespace service {
 	        this.balanceKey = source["balanceKey"];
 	    }
 	}
+	export class ProviderUsageView {
+	    todayTokens: number;
+	    weekTokens: number;
+	    monthTokens: number;
+	    totalTokens: number;
+	    daily: usage.DayTokens[];
+	    modelDaily: usage.ModelDayTokens[];
+	    models: usage.ModelStat[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ProviderUsageView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.todayTokens = source["todayTokens"];
+	        this.weekTokens = source["weekTokens"];
+	        this.monthTokens = source["monthTokens"];
+	        this.totalTokens = source["totalTokens"];
+	        this.daily = this.convertValues(source["daily"], usage.DayTokens);
+	        this.modelDaily = this.convertValues(source["modelDaily"], usage.ModelDayTokens);
+	        this.models = this.convertValues(source["models"], usage.ModelStat);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ProviderView {
 	    id: string;
 	    name: string;
@@ -309,6 +353,7 @@ export namespace service {
 	    balanceKind: string;
 	    balanceUrl: string;
 	    balanceKeyHint: string;
+	    proxyUrl: string;
 	    enabled: boolean;
 	    status: string;
 	    coolingUntil?: string;
@@ -334,6 +379,7 @@ export namespace service {
 	        this.balanceKind = source["balanceKind"];
 	        this.balanceUrl = source["balanceUrl"];
 	        this.balanceKeyHint = source["balanceKeyHint"];
+	        this.proxyUrl = source["proxyUrl"];
 	        this.enabled = source["enabled"];
 	        this.status = source["status"];
 	        this.coolingUntil = source["coolingUntil"];
@@ -348,6 +394,8 @@ export namespace service {
 	    listenPort: number;
 	    localKey: string;
 	    retainDays: number;
+	    theme: string;
+	    language: string;
 	    running: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -360,6 +408,8 @@ export namespace service {
 	        this.listenPort = source["listenPort"];
 	        this.localKey = source["localKey"];
 	        this.retainDays = source["retainDays"];
+	        this.theme = source["theme"];
+	        this.language = source["language"];
 	        this.running = source["running"];
 	    }
 	}
@@ -396,6 +446,58 @@ export namespace usage {
 	        this.cacheReadTokens = source["cacheReadTokens"];
 	        this.cacheWriteTokens = source["cacheWriteTokens"];
 	        this.errors = source["errors"];
+	    }
+	}
+	export class DayTokens {
+	    day: string;
+	    tokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DayTokens(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.day = source["day"];
+	        this.tokens = source["tokens"];
+	    }
+	}
+	export class ModelDayTokens {
+	    day: string;
+	    model: string;
+	    tokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelDayTokens(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.day = source["day"];
+	        this.model = source["model"];
+	        this.tokens = source["tokens"];
+	    }
+	}
+	export class ModelStat {
+	    model: string;
+	    requests: number;
+	    inputTokens: number;
+	    outputTokens: number;
+	    cacheReadTokens: number;
+	    totalTokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	        this.requests = source["requests"];
+	        this.inputTokens = source["inputTokens"];
+	        this.outputTokens = source["outputTokens"];
+	        this.cacheReadTokens = source["cacheReadTokens"];
+	        this.totalTokens = source["totalTokens"];
 	    }
 	}
 
