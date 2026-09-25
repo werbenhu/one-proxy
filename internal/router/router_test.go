@@ -82,7 +82,7 @@ func TestPrioritySticky(t *testing.T) {
 	channels, adapters := twoKimiChannels()
 	r, _ := newTestRouter(t, channels, adapters)
 	for i := 0; i < 3; i++ {
-		resp, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8})
+		resp, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}, "claude-sonnet-4-6")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,7 +107,7 @@ func TestQuotaFailover(t *testing.T) {
 	adapters["ch-a"].invokeErr = &provider.UpstreamError{Kind: provider.ErrKindQuota, StatusCode: 429, Body: "quota"}
 	r, registry := newTestRouter(t, channels, adapters)
 
-	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}); err != nil {
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}, "claude-sonnet-4-6"); err != nil {
 		t.Fatal(err)
 	}
 	if got := adapters["ch-b"].modelsSeen; len(got) != 1 {
@@ -121,7 +121,7 @@ func TestQuotaFailover(t *testing.T) {
 	adapters["ch-b"].invokeErr = nil
 	adapters["ch-a"].modelsSeen = nil
 	adapters["ch-b"].modelsSeen = nil
-	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}); err != nil {
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}, "claude-sonnet-4-6"); err != nil {
 		t.Fatal(err)
 	}
 	if len(adapters["ch-a"].modelsSeen) != 0 || len(adapters["ch-b"].modelsSeen) != 1 {
@@ -135,7 +135,7 @@ func TestCooldownExpiry(t *testing.T) {
 	r, registry := newTestRouter(t, channels, adapters)
 	registry.SetCooling("ch-a", time.Now().Add(-time.Second), "429")
 	adapters["ch-b"].modelsSeen = nil
-	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}); err != nil {
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}, "claude-sonnet-4-6"); err != nil {
 		t.Fatal(err)
 	}
 	if len(adapters["ch-a"].modelsSeen) != 1 {
@@ -150,7 +150,7 @@ func TestAuthFailedNoRetry(t *testing.T) {
 	registry.SetAuthFailed("ch-a", "上游 401/403")
 	adapters["ch-b"].invokeErr = &provider.UpstreamError{Kind: provider.ErrKindQuota, StatusCode: 429}
 
-	_, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8})
+	_, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}, "claude-sonnet-4-6")
 	if err == nil {
 		t.Fatal("应报错")
 	}
@@ -169,7 +169,7 @@ func TestAuthFailedNoRetry(t *testing.T) {
 
 	// 再次请求：B 已冷却、A 仍 auth-failed → 前置过滤即返回聚合错误（B 不再被调用）
 	adapters["ch-b"].modelsSeen = nil
-	_, err = r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8})
+	_, err = r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}, "claude-sonnet-4-6")
 	if err == nil {
 		t.Fatal("应报错")
 	}
@@ -190,7 +190,7 @@ func TestBadRequestSwitching(t *testing.T) {
 	channels, adapters := twoKimiChannels()
 	adapters["ch-a"].invokeErr = &provider.UpstreamError{Kind: provider.ErrKindBadRequest, StatusCode: 400, Body: `{"error":{"message":"invalid tool schema"}}`}
 	r, _ := newTestRouter(t, channels, adapters)
-	_, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8})
+	_, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}, "claude-sonnet-4-6")
 	if err == nil {
 		t.Fatal("应报错")
 	}
@@ -201,7 +201,7 @@ func TestBadRequestSwitching(t *testing.T) {
 	channels2, adapters2 := twoKimiChannels()
 	adapters2["ch-a"].invokeErr = &provider.UpstreamError{Kind: provider.ErrKindBadRequest, StatusCode: 400, Body: `{"error":{"message":"model kimi-k3 not found"}}`}
 	r2, _ := newTestRouter(t, channels2, adapters2)
-	if _, err := r2.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}); err != nil {
+	if _, err := r2.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}, "claude-sonnet-4-6"); err != nil {
 		t.Fatal(err)
 	}
 	if len(adapters2["ch-b"].modelsSeen) != 1 {
@@ -214,7 +214,7 @@ func TestUpstreamSwitchNoState(t *testing.T) {
 	channels, adapters := twoKimiChannels()
 	adapters["ch-a"].invokeErr = &provider.UpstreamError{Kind: provider.ErrKindUpstream, StatusCode: 502}
 	r, registry := newTestRouter(t, channels, adapters)
-	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}); err != nil {
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8}, "claude-sonnet-4-6"); err != nil {
 		t.Fatal(err)
 	}
 	if len(adapters["ch-b"].modelsSeen) != 1 {
@@ -242,7 +242,7 @@ func TestDirectAndOrgModel(t *testing.T) {
 		t.Fatalf("org/model 被误拆: %s", id)
 	}
 	// 直连未声明模型也可用
-	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "ch-a/anything", MaxTokens: 8}); err != nil {
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "ch-a/anything", MaxTokens: 8}, "ch-a/anything"); err != nil {
 		t.Fatal(err)
 	}
 	if got := adapters["ch-a"].modelsSeen; len(got) != 1 || got[0] != "anything" {
@@ -255,7 +255,7 @@ func TestStreamFailover(t *testing.T) {
 	channels, adapters := twoKimiChannels()
 	adapters["ch-a"].streamErr = &provider.UpstreamError{Kind: provider.ErrKindAuth, StatusCode: 401}
 	r, _ := newTestRouter(t, channels, adapters)
-	ch, err := r.Stream(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8, Stream: true})
+	ch, err := r.Stream(context.Background(), &anthropic.Request{Model: "claude-sonnet-4-6", MaxTokens: 8, Stream: true}, "claude-sonnet-4-6")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestStreamFailover(t *testing.T) {
 func TestUnknownModel(t *testing.T) {
 	channels, adapters := twoKimiChannels()
 	r, _ := newTestRouter(t, channels, adapters)
-	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "nope", MaxTokens: 8}); err == nil {
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "nope", MaxTokens: 8}, "nope"); err == nil {
 		t.Fatal("应报错")
 	}
 }

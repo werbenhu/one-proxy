@@ -54,6 +54,10 @@ func NewApp() (*App, error) {
 	registry := provider.NewRegistry()
 	rebuildAdapters(store.Get(), registry)
 	server := proxy.NewServer(store, registry)
+	if dbPath, err := config.DefaultPath("usage.db"); err == nil {
+		// 用量记账失败不阻塞启动（可无记账运行）
+		_ = server.AttachUsage(dbPath, "api")
+	}
 	return &App{store: store, registry: registry, server: server, configWarning: configWarning}, nil
 }
 

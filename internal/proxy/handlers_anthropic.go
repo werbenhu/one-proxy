@@ -43,7 +43,7 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 	req.Header = whitelistHeaders(r)
 
 	if req.Stream {
-		events, err := h.router.Stream(r.Context(), req)
+		events, err := h.router.Stream(r.Context(), req, req.Model)
 		if err != nil {
 			h.writeUpstreamError(w, err)
 			return
@@ -51,7 +51,8 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 		h.serveAnthropicStream(w, events)
 		return
 	}
-	resp, err := h.router.Invoke(r.Context(), req)
+	requestedModel := req.Model
+	resp, err := h.router.Invoke(r.Context(), req, requestedModel)
 	if err != nil {
 		h.writeUpstreamError(w, err)
 		return

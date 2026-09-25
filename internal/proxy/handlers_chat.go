@@ -49,7 +49,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 	req.Model = model
 
 	if req.Stream {
-		events, err := h.router.Stream(r.Context(), req)
+		events, err := h.router.Stream(r.Context(), req, req.Model)
 		if err != nil {
 			h.writeChatUpstreamError(w, err)
 			return
@@ -57,7 +57,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		h.serveChatStream(w, events)
 		return
 	}
-	resp, err := h.router.Invoke(r.Context(), req)
+	resp, err := h.router.Invoke(r.Context(), req, req.Model)
 	if err != nil {
 		h.writeChatUpstreamError(w, err)
 		return

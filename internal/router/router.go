@@ -42,6 +42,31 @@ type Router struct {
 	store    *config.Store
 	registry *provider.Registry
 	now      func() time.Time
+
+	// onUsage 用量埋点回调（proxy 注入；可为 nil）。成功与失败都上报，
+	// 流式在事件流结束后回调。
+	onUsage func(RequestInfo)
+}
+
+// RequestInfo 一次请求的路由结果信息（usage 埋点用）。
+type RequestInfo struct {
+	ChannelID      string
+	ChannelName    string
+	ModelRequested string // 客户端请求的对外模型名
+	ModelUpstream  string // 实际转发给上游的模型名
+	Usage          anthropic.Usage
+	Status         int
+	LatencyMs      int64
+	Error          string
+}
+
+// SetUsageHook 注入用量回调。
+func (r *Router) SetUsageHook(fn func(RequestInfo)) { r.onUsage = fn }
+
+func (r *Router) emitUsage(info RequestInfo) {
+	if r.onUsage != nil {
+		r.onUsage(info)
+	}
 }
 
 func New(store *config.Store, registry *provider.Registry) *Router {
@@ -136,7 +161,7 @@ func (r *Router) pickAvailable(candidates []Target) ([]Target, []string) {
 }
 
 // Invoke 按优先级依次尝试，失败按错误类别决定冷却/标记并切换。
-func (r *Router) Invoke(ctx context.Context, req *anthropic.Request) (*anthropic.Response, error) {
+func (r *Router) Invoke(ctx context.Context, req *anthropic.Request, requestedModel string) (*anthropic.Response, error) {
 	candidates, err := r.Resolve(req.Model)
 	if err != nil {
 		return nil, err
@@ -149,13 +174,25 @@ func (r *Router) Invoke(ctx context.Context, req *anthropic.Request) (*anthropic
 	for _, t := range available {
 		attempt := *req
 		attempt.Model = t.UpstreamModel
+		start := r.now()
 		resp, err := t.Adapter.Invoke(ctx, &attempt)
+		latency := r.now().Sub(start).Milliseconds()
 		if err == nil {
 			r.applySuccess(t)
+			r.emitUsage(RequestInfo{
+				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name,
+				ModelRequested: requestedModel, ModelUpstream: t.UpstreamModel,
+				Usage: resp.Usage, Status: 200, LatencyMs: latency,
+			})
 			return resp, nil
 		}
 		lastErr = err
 		r.applyFailure(t, err)
+		r.emitUsage(RequestInfo{
+			ChannelID: t.Channel.ID, ChannelName: t.Channel.Name,
+			ModelRequested: requestedModel, ModelUpstream: t.UpstreamModel,
+			Status: statusCodeOf(err), LatencyMs: latency, Error: err.Error(),
+		})
 		if !provider.MaySwitch(err) {
 			return nil, err
 		}
@@ -168,10 +205,19 @@ func (r *Router) Invoke(ctx context.Context, req *anthropic.Request) (*anthropic
 	return nil, &ErrNoCandidates{Reasons: reasons}
 }
 
+func statusCodeOf(err error) int {
+	var ue *provider.UpstreamError
+	if errors.As(err, &ue) {
+		return ue.StatusCode
+	}
+	return 0
+}
+
 // Stream 同 Invoke 的流式版本：返回事件 channel。
 // 注意：流式场景上游错误多在 Stream() 调用时（首事件前）暴露；
 // 事件流中途的错误以 error 事件透传，不再切换（plan.md：首字节后不重试）。
-func (r *Router) Stream(ctx context.Context, req *anthropic.Request) (<-chan anthropic.Event, error) {
+// 返回的 channel 关闭时通过 done 通知（usage 埋点在流结束后上报）。
+func (r *Router) Stream(ctx context.Context, req *anthropic.Request, requestedModel string) (<-chan anthropic.Event, error) {
 	candidates, err := r.Resolve(req.Model)
 	if err != nil {
 		return nil, err
@@ -184,17 +230,40 @@ func (r *Router) Stream(ctx context.Context, req *anthropic.Request) (<-chan ant
 	for _, t := range available {
 		attempt := *req
 		attempt.Model = t.UpstreamModel
+		start := r.now()
 		events, err := t.Adapter.Stream(ctx, &attempt)
-		if err == nil {
-			r.applySuccess(t)
-			return events, nil
+		if err != nil {
+			latency := r.now().Sub(start).Milliseconds()
+			lastErr = err
+			r.applyFailure(t, err)
+			r.emitUsage(RequestInfo{
+				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name,
+				ModelRequested: requestedModel, ModelUpstream: t.UpstreamModel,
+				Status: statusCodeOf(err), LatencyMs: latency, Error: err.Error(),
+			})
+			if !provider.MaySwitch(err) {
+				return nil, err
+			}
+			reasons = append(reasons, fmt.Sprintf("%s：%s", t.Channel.Name, err.Error()))
+			continue
 		}
-		lastErr = err
-		r.applyFailure(t, err)
-		if !provider.MaySwitch(err) {
-			return nil, err
-		}
-		reasons = append(reasons, fmt.Sprintf("%s：%s", t.Channel.Name, err.Error()))
+		r.applySuccess(t)
+		// 包装事件流：累计 usage，结束后上报
+		wrapped := make(chan anthropic.Event, 16)
+		go func(t Target, requested, upstream string, started time.Time) {
+			defer close(wrapped)
+			u := anthropic.Usage{}
+			for ev := range events {
+				u.MergeEvent(ev)
+				wrapped <- ev
+			}
+			r.emitUsage(RequestInfo{
+				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name,
+				ModelRequested: requested, ModelUpstream: upstream,
+				Usage: u, Status: 200, LatencyMs: time.Since(started).Milliseconds(),
+			})
+		}(t, requestedModel, t.UpstreamModel, start)
+		return wrapped, nil
 	}
 	if len(candidates) == 1 {
 		return nil, lastErr

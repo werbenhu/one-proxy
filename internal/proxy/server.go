@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/werbenhu/one-proxy/internal/config"
 	"github.com/werbenhu/one-proxy/internal/provider"
 	"github.com/werbenhu/one-proxy/internal/router"
+	"github.com/werbenhu/one-proxy/internal/usage"
 )
 
 // MaxBodyBytes 请求体上限（图片 base64 场景预留）。
@@ -21,6 +23,7 @@ type Server struct {
 	router   *router.Router
 	mux      *http.ServeMux
 	handler  *Handler
+	recorder *usage.Recorder
 
 	mu     sync.RWMutex
 	server *http.Server
@@ -35,6 +38,49 @@ func NewServer(store *config.Store, registry *provider.Registry) *Server {
 	s.mux.HandleFunc("POST /v1/messages", s.handler.Messages)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.handler.ChatCompletions)
 	return s
+}
+
+// AttachUsage 接入用量记账（usage db 路径；失败时降级为不记账）。
+func (s *Server) AttachUsage(dbPath string, protocol string) error {
+	st, err := usage.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	s.recorder = usage.NewRecorder(st, 256)
+	s.router.SetUsageHook(func(info router.RequestInfo) {
+		s.recorder.Record(usage.Record{
+			CreatedAt:        time.Now(),
+			ChannelID:        info.ChannelID,
+			ChannelName:      info.ChannelName,
+			ModelRequested:   info.ModelRequested,
+			ModelUpstream:    info.ModelUpstream,
+			Protocol:         protocol,
+			InputTokens:      info.Usage.InputTokens,
+			OutputTokens:     info.Usage.OutputTokens,
+			CacheReadTokens:  info.Usage.CacheReadInputTokens,
+			CacheWriteTokens: info.Usage.CacheCreationInputTokens,
+			Status:           info.Status,
+			LatencyMs:        info.LatencyMs,
+			Error:            info.Error,
+		})
+	})
+	return nil
+}
+
+// UsageStore 暴露用量查询（service 层用）；未接入时为 nil。
+func (s *Server) UsageStore() *usage.Store {
+	if s.recorder == nil {
+		return nil
+	}
+	return s.recorder.Store()
+}
+
+// CloseUsage 关闭用量记账（测试与停机时释放 db 句柄）。
+func (s *Server) CloseUsage() {
+	if s.recorder != nil {
+		s.recorder.Close()
+		s.recorder = nil
+	}
 }
 
 // NewDefaultServer 读取默认路径配置并构造服务器（CLI 骨架用）。

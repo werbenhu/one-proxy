@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/werbenhu/one-proxy/internal/config"
 	"github.com/werbenhu/one-proxy/internal/protocol/anthropic"
 	"github.com/werbenhu/one-proxy/internal/provider"
+	"github.com/werbenhu/one-proxy/internal/usage"
 )
 
 func newTestServer(t *testing.T, channels []config.Channel) (*httptest.Server, *config.Store) {
@@ -302,5 +304,66 @@ func TestEndToEndFailover(t *testing.T) {
 	}
 	if bHits != 1 {
 		t.Fatalf("B 命中数: %d", bHits)
+	}
+}
+
+// 端到端用量埋点：请求成功后 request_log 落库。
+func TestUsageRecording(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"msg_u","type":"message","role":"assistant","model":"kimi-k3",
+			"content":[{"type":"text","text":"x"}],"stop_reason":"end_turn",
+			"usage":{"input_tokens":11,"output_tokens":7,"cache_read_input_tokens":3}}`))
+	}))
+	defer up.Close()
+	dir := t.TempDir()
+	store := config.NewStore(dir + "/config.json")
+	cfg := config.Default()
+	cfg.LocalKey = "testkey123"
+	cfg.Channels = []config.Channel{{ID: "ch-u", Name: "U", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
+		Models: []string{"m"}, ModelMapping: map[string]string{"m": "kimi-k3"}, Enabled: true}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	registry := provider.NewRegistry()
+	registry.Register("ch-u", anthropiccompat.New(up.URL, "k"))
+	srv := NewServer(store, registry)
+	dbPath := filepath.Join(t.TempDir(), "u2.db")
+	if err := srv.AttachUsage(dbPath, "anthropic"); err != nil {
+		t.Fatal(err)
+	}
+	tsv := httptest.NewServer(srv.Handler())
+	defer tsv.Close()
+	defer srv.CloseUsage()
+
+	req, _ := http.NewRequest("POST", tsv.URL+"/v1/messages", strings.NewReader(`{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// 等异步 recorder 刷写（轮询至多 2s）
+	deadline := time.Now().Add(2 * time.Second)
+	var rows []usage.AggRow
+	for time.Now().Before(deadline) {
+		rows, err = srv.UsageStore().Summary(time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("埋点未落库: %+v", rows)
+	}
+	r0 := rows[0]
+	if r0.ChannelID != "ch-u" || r0.ModelRequested != "m" || r0.ModelUpstream != "kimi-k3" {
+		t.Fatalf("埋点维度: %+v", r0)
+	}
+	if r0.InputTokens != 11 || r0.OutputTokens != 7 || r0.CacheRead != 3 {
+		t.Fatalf("token 记账: %+v", r0)
 	}
 }
