@@ -13,6 +13,7 @@ import (
 	"time"
 
 	anthropiccompat "github.com/werbenhu/one-proxy/internal/adapters/anthropiccompat"
+	grokadapter "github.com/werbenhu/one-proxy/internal/adapters/grok"
 	"github.com/werbenhu/one-proxy/internal/config"
 	"github.com/werbenhu/one-proxy/internal/protocol/anthropic"
 	"github.com/werbenhu/one-proxy/internal/provider"
@@ -365,5 +366,57 @@ func TestUsageRecording(t *testing.T) {
 	}
 	if r0.InputTokens != 11 || r0.OutputTokens != 7 || r0.CacheRead != 3 {
 		t.Fatalf("token 记账: %+v", r0)
+	}
+}
+
+// /v1/responses 直通端到端：grok 渠道原样转发。
+func TestResponsesEndpointDirect(t *testing.T) {
+	var hit map[string]json.RawMessage
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Errorf("grok 上游路径: %s", r.URL.Path)
+		}
+		data, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(data, &hit)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_9","object":"response","model":"grok-4.5","output":[],"usage":{"input_tokens":1}}`))
+	}))
+	defer up.Close()
+	dir := t.TempDir()
+	store := config.NewStore(dir + "/config.json")
+	cfg := config.Default()
+	cfg.LocalKey = "testkey123"
+	cfg.Channels = []config.Channel{
+		{ID: "ch-grok", Name: "Grok", Type: config.TypeGrok, BaseURL: up.URL, APIKey: "xk",
+			Models: []string{"grok-4.5"}, Enabled: true},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	registry := provider.NewRegistry()
+	registry.Register("ch-grok", grokadapter.New("xk", up.URL))
+	srv := NewServer(store, registry)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/responses", strings.NewReader(
+		`{"model":"grok-4.5","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("responses: %d %s", resp.StatusCode, body)
+	}
+	var out map[string]json.RawMessage
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if string(out["id"]) != `"resp_9"` {
+		t.Fatalf("直通响应: %s", out["id"])
+	}
+	if string(hit["input"]) != `"hi"` {
+		t.Fatalf("直通请求保真: %s", hit["input"])
 	}
 }

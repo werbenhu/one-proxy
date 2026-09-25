@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/werbenhu/one-proxy/internal/adapters/anthropiccompat"
+	grokadapter "github.com/werbenhu/one-proxy/internal/adapters/grok"
 	openaicompat "github.com/werbenhu/one-proxy/internal/adapters/openaicompat"
 	"github.com/werbenhu/one-proxy/internal/config"
 	"github.com/werbenhu/one-proxy/internal/provider"
@@ -52,6 +54,7 @@ func NewApp() (*App, error) {
 		configWarning = fmt.Sprintf("原配置无效，已备份到 %s 并恢复默认设置", backup)
 	}
 	registry := provider.NewRegistry()
+	bindExtraAccess(store)
 	rebuildAdapters(store.Get(), registry)
 	server := proxy.NewServer(store, registry)
 	if dbPath, err := config.DefaultPath("usage.db"); err == nil {
@@ -73,8 +76,51 @@ func rebuildAdapters(cfg config.Config, registry *provider.Registry) {
 		case config.TypeOpenAICompat:
 			registry.Register(ch.ID, openaicompat.New(ch.BaseURL, ch.APIKey))
 		case config.TypeGrok:
-			// M5 移植 grok 适配器后接入
+			registerGrok(ch, registry)
 		}
+	}
+}
+
+// grokOAuthExtra 当前渠道的 OAuth extra 快照（供适配器读）。
+func registerGrok(ch config.Channel, registry *provider.Registry) {
+	var extra struct {
+		Mode string `json:"mode"`
+	}
+	_ = json.Unmarshal(ch.Extra, &extra)
+	if extra.Mode == "oauth" {
+		adapter := grokadapter.NewOAuth(ch.BaseURL,
+			func() []byte { return currentExtra(ch.ID) },
+			func(data []byte) error { return saveExtra(ch.ID, data) },
+			nil)
+		registry.Register(ch.ID, adapter)
+		return
+	}
+	registry.Register(ch.ID, grokadapter.New(ch.APIKey, ch.BaseURL))
+}
+
+// currentExtra/saveExtra 由 App 注入的配置访问器（启动时装配）。
+var (
+	currentExtra func(channelID string) []byte
+	saveExtra    func(channelID string, data []byte) error
+)
+
+func bindExtraAccess(store *config.Store) {
+	currentExtra = func(channelID string) []byte {
+		ch, ok := store.Get().Channel(channelID)
+		if !ok {
+			return nil
+		}
+		return ch.Extra
+	}
+	saveExtra = func(channelID string, data []byte) error {
+		return store.Update(func(c *config.Config) {
+			for i := range c.Channels {
+				if c.Channels[i].ID == channelID {
+					c.Channels[i].Extra = data
+					return
+				}
+			}
+		})
 	}
 }
 

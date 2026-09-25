@@ -37,6 +37,7 @@ func NewServer(store *config.Store, registry *provider.Registry) *Server {
 	s.mux.HandleFunc("GET /v1/models", s.handler.ListModels)
 	s.mux.HandleFunc("POST /v1/messages", s.handler.Messages)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.handler.ChatCompletions)
+	s.mux.HandleFunc("POST /v1/responses", s.handler.Responses)
 	return s
 }
 
