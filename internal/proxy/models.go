@@ -6,11 +6,13 @@ import (
 
 	"github.com/werbenhu/one-proxy/internal/config"
 	"github.com/werbenhu/one-proxy/internal/provider"
+	"github.com/werbenhu/one-proxy/internal/router"
 )
 
 type Handler struct {
 	store    *config.Store
 	registry *provider.Registry
+	router   *router.Router
 }
 
 func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {

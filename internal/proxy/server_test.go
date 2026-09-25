@@ -263,3 +263,44 @@ var (
 	_ = time.Second
 	_ anthropic.Event
 )
+
+// 端到端 failover：主渠道 429 → 自动切备渠道（同模型双渠道）。
+func TestEndToEndFailover(t *testing.T) {
+	var bHits int
+	upA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		_, _ = w.Write([]byte(`{"error":"quota"}`))
+	}))
+	defer upA.Close()
+	upB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bHits++
+		_, _ = w.Write([]byte(`{"id":"msg_b","type":"message","role":"assistant","model":"kimi-k3",
+			"content":[{"type":"text","text":"from-b"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer upB.Close()
+	ts, _ := newTestServer(t, []config.Channel{
+		{ID: "ch-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: upA.URL, APIKey: "k",
+			Models: []string{"kimi"}, Priority: 10, Enabled: true},
+		{ID: "ch-b", Name: "B", Type: config.TypeAnthropicCompat, BaseURL: upB.URL, APIKey: "k",
+			Models: []string{"kimi"}, Priority: 5, Enabled: true},
+	})
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(`{"model":"kimi","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("failover 失败: %d %s", resp.StatusCode, body)
+	}
+	var out map[string]json.RawMessage
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if string(out["id"]) != `"msg_b"` {
+		t.Fatalf("应从 B 渠道响应: %s", out["id"])
+	}
+	if bHits != 1 {
+		t.Fatalf("B 命中数: %d", bHits)
+	}
+}

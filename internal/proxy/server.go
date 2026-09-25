@@ -9,6 +9,7 @@ import (
 
 	"github.com/werbenhu/one-proxy/internal/config"
 	"github.com/werbenhu/one-proxy/internal/provider"
+	"github.com/werbenhu/one-proxy/internal/router"
 )
 
 // MaxBodyBytes 请求体上限（图片 base64 场景预留）。
@@ -17,6 +18,7 @@ const MaxBodyBytes = 32 << 20
 type Server struct {
 	store    *config.Store
 	registry *provider.Registry
+	router   *router.Router
 	mux      *http.ServeMux
 	handler  *Handler
 
@@ -25,8 +27,9 @@ type Server struct {
 }
 
 func NewServer(store *config.Store, registry *provider.Registry) *Server {
-	s := &Server{store: store, registry: registry}
-	s.handler = &Handler{store: store, registry: registry}
+	rt := router.New(store, registry)
+	s := &Server{store: store, registry: registry, router: rt}
+	s.handler = &Handler{store: store, registry: registry, router: rt}
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET /v1/models", s.handler.ListModels)
 	s.mux.HandleFunc("POST /v1/messages", s.handler.Messages)

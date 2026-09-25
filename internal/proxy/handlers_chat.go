@@ -10,6 +10,7 @@ import (
 	"github.com/werbenhu/one-proxy/internal/protocol/convert"
 	"github.com/werbenhu/one-proxy/internal/protocol/openaichat"
 	"github.com/werbenhu/one-proxy/internal/provider"
+	"github.com/werbenhu/one-proxy/internal/router"
 )
 
 // ChatCompletions OpenAI Chat 入口：请求 → canonical → 渠道适配器 → 响应/SSE
@@ -37,17 +38,7 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	model, direct := resolveModel(probe.Model)
-
-	ch, ok := h.pickChannel(direct, model)
-	if !ok {
-		writeChatError(w, http.StatusNotFound, "invalid_request_error", "没有渠道声明模型 "+model)
-		return
-	}
-	adapter, ok := h.registry.Get(ch.ID)
-	if !ok {
-		writeChatError(w, http.StatusBadGateway, "api_error", "渠道 "+ch.ID+" 适配器未注册")
-		return
-	}
+	_ = direct
 
 	req, err := convert.ChatToAnthropic(body)
 	if err != nil {
@@ -55,17 +46,18 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header = chatForwardHeaders(r)
-	if mapped, ok := ch.ModelMapping[model]; ok && direct == "" {
-		req.Model = mapped
-	} else {
-		req.Model = model
-	}
+	req.Model = model
 
 	if req.Stream {
-		h.serveChatStream(w, r, adapter, req)
+		events, err := h.router.Stream(r.Context(), req)
+		if err != nil {
+			h.writeChatUpstreamError(w, err)
+			return
+		}
+		h.serveChatStream(w, events)
 		return
 	}
-	resp, err := adapter.Invoke(r.Context(), req)
+	resp, err := h.router.Invoke(r.Context(), req)
 	if err != nil {
 		h.writeChatUpstreamError(w, err)
 		return
@@ -95,12 +87,7 @@ func chatCompletionEnvelope(c *openaichat.ChatResponse) map[string]any {
 }
 
 // serveChatStream canonical 事件 → chat chunk SSE。
-func (h *Handler) serveChatStream(w http.ResponseWriter, r *http.Request, adapter provider.Adapter, req *anthropic.Request) {
-	events, err := adapter.Stream(r.Context(), req)
-	if err != nil {
-		h.writeChatUpstreamError(w, err)
-		return
-	}
+func (h *Handler) serveChatStream(w http.ResponseWriter, events <-chan anthropic.Event) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -146,6 +133,11 @@ func (h *Handler) serveChatStream(w http.ResponseWriter, r *http.Request, adapte
 func chatForwardHeaders(r *http.Request) http.Header { return http.Header{} }
 
 func (h *Handler) writeChatUpstreamError(w http.ResponseWriter, err error) {
+	var nc *router.ErrNoCandidates
+	if errors.As(err, &nc) {
+		writeChatError(w, http.StatusServiceUnavailable, "server_error", nc.Error())
+		return
+	}
 	var ue *provider.UpstreamError
 	if errors.As(err, &ue) {
 		status := ue.StatusCode
