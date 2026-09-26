@@ -59,6 +59,7 @@ const dict: Record<string, { zh: string; en: string }> = {
   'providers.querying': { zh: '查询中', en: 'Checking' },
   'providers.query': { zh: '查询', en: 'Check' },
   'providers.queryUnsupported': { zh: '不支持查询', en: 'Not supported' },
+  'providers.dragReorder': { zh: '拖拽调整顺序', en: 'Drag to reorder' },
   'providers.models': { zh: '模型', en: 'Models' },
   'providers.empty': { zh: '还没有提供商账户。先添加一个上游账户，再到渠道页绑定模型。', en: 'No provider accounts yet. Add an upstream account first, then bind models on the Channels page.' },
   'providers.availableModels': { zh: '可用模型', en: 'Available models' },

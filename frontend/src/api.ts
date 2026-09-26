@@ -158,6 +158,7 @@ declare global {
       ExportProviders(): Promise<string>
       ImportProviders(): Promise<string>
       DeleteProvider(id: string): Promise<void>
+      ReorderProviders(ids: string[]): Promise<void>
       TestProvider(id: string): Promise<void>
       GetProviderModels(id: string): Promise<ModelInfo[]>
       GetProviderBalance(id: string): Promise<BalanceView>

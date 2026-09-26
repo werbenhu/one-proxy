@@ -237,6 +237,9 @@ func (a *App) DeleteProvider(id string) error {
 	return nil
 }
 
+// ReorderProviders 按前端拖拽结果重排提供商（顺序不影响适配器，无需重建）。
+func (a *App) ReorderProviders(ids []string) error { return a.svc.ReorderProviders(ids) }
+
 func (a *App) GetProviderBalance(id string) (service.BalanceView, error) {
 	return a.svc.ProviderBalance(id)
 }

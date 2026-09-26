@@ -62,6 +62,10 @@ export function ImportProviders() {
   return window['go']['main']['App']['ImportProviders']();
 }
 
+export function ReorderProviders(arg1) {
+  return window['go']['main']['App']['ReorderProviders'](arg1);
+}
+
 export function SaveChannel(arg1, arg2) {
   return window['go']['main']['App']['SaveChannel'](arg1, arg2);
 }

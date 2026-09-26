@@ -6,7 +6,8 @@
     </div>
 
     <div v-if="providers.length" class="provider-list">
-      <article v-for="provider in providers" :key="provider.id" class="provider-row">
+      <article v-for="provider in providers" :key="provider.id" class="provider-row" :class="{ 'drag-over': dragOverId === provider.id }" @dragover.prevent="onDragOver(provider.id)" @dragleave="onDragLeave(provider.id)" @drop="onDrop(provider.id)">
+        <span class="drag-handle" draggable="true" :title="t('providers.dragReorder')" @dragstart="onDragStart(provider.id, $event)" @dragend="onDragEnd">⠿</span>
         <div class="provider-main">
           <div class="provider-title">
             <span v-if="!provider.enabled" class="status-dot disabled"></span>
@@ -209,6 +210,27 @@ async function test(id: string) { try { await app().TestProvider(id); toast(t('p
 } }
 async function discoverModels(id: string) { try { const models = await app().GetProviderModels(id); modelList.value = models.map(m => m.id); modelsOpen.value = true } catch (e) { toast(t('providers.modelsFailed') + String(e), 'error', 5000) } }
 function openUsage(p: ProviderView) { usageFor.value = p }
+
+const dragId = ref('')
+const dragOverId = ref('')
+function onDragStart(id: string, e: DragEvent) {
+  dragId.value = id
+  if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id) }
+}
+function onDragOver(id: string) { if (dragId.value && id !== dragId.value) dragOverId.value = id }
+function onDragLeave(id: string) { if (dragOverId.value === id) dragOverId.value = '' }
+function onDragEnd() { dragId.value = ''; dragOverId.value = '' }
+async function onDrop(targetId: string) {
+  const from = providers.value.findIndex(p => p.id === dragId.value)
+  const to = providers.value.findIndex(p => p.id === targetId)
+  onDragEnd()
+  if (from < 0 || to < 0 || from === to) return
+  const list = [...providers.value]
+  const [moved] = list.splice(from, 1)
+  list.splice(to, 0, moved)
+  providers.value = list
+  try { await app().ReorderProviders(list.map(p => p.id)) } catch (e) { toast(String(e), 'error'); await refresh() }
+}
 async function fetchBalance(id: string) { try { balances.value[id] = await app().GetProviderBalance(id) } catch { /* 自动查询失败时保持「查询」按钮 */ } }
 async function checkBalance(id: string) {
   refreshing.value = new Set(refreshing.value).add(id)

@@ -157,8 +157,11 @@ code { color: var(--code); font-family: "Cascadia Code", Consolas, monospace; }
 .empty-state, .inline-empty { border: 1px dashed var(--border); color: var(--muted); padding: 28px; text-align: center; }
 .inline-empty { padding: 14px; margin-bottom: 12px; }
 .provider-list { border-top: 1px solid var(--border); }
-.provider-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(64px, 0.5fr) minmax(230px, 320px) auto; align-items: center; gap: 14px; min-height: 78px; border-bottom: 1px solid var(--border); }
+.provider-row { display: grid; grid-template-columns: auto minmax(0, 1.2fr) minmax(64px, 0.5fr) minmax(230px, 320px) auto; align-items: center; gap: 14px; min-height: 78px; border-bottom: 1px solid var(--border); }
 .provider-row > * { min-width: 0; }
+.provider-row.drag-over { box-shadow: inset 0 2px 0 var(--accent); }
+.drag-handle { cursor: grab; color: var(--muted); user-select: none; font-size: 14px; padding: 4px 2px; flex: none; }
+.drag-handle:active { cursor: grabbing; }
 .provider-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .provider-title strong {
   overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -305,6 +306,25 @@ func (s *Service) DeleteProvider(id string) error {
 			}
 		}
 		c.Providers = out
+	})
+}
+
+// ReorderProviders 按给定 ID 顺序重排提供商（列表拖拽排序）；未出现在 ids
+// 里的保持相对顺序排在末尾。
+func (s *Service) ReorderProviders(ids []string) error {
+	return s.store.Update(func(c *config.Config) {
+		pos := make(map[string]int, len(ids))
+		for i, id := range ids {
+			pos[id] = i
+		}
+		sort.SliceStable(c.Providers, func(i, j int) bool {
+			pi, iok := pos[c.Providers[i].ID]
+			pj, jok := pos[c.Providers[j].ID]
+			if iok != jok {
+				return iok
+			}
+			return pi < pj
+		})
 	})
 }
 
