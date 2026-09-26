@@ -55,7 +55,7 @@ const dict: Record<string, { zh: string; en: string }> = {
   'providers.detail': { zh: '详情', en: 'Details' },
   'providers.accountQuota': { zh: '账户额度', en: 'Account quota' },
   'providers.resetTime': { zh: '重置时间', en: 'Resets at' },
-  'providers.refreshing': { zh: '刷新中', en: 'Refreshing' },
+  'providers.refreshing': { zh: '刷新中', en: 'Refreshing…' },
   'providers.querying': { zh: '查询中', en: 'Checking' },
   'providers.query': { zh: '查询', en: 'Check' },
   'providers.queryUnsupported': { zh: '不支持查询', en: 'Not supported' },
