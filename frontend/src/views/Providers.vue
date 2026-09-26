@@ -126,7 +126,7 @@
 import { onMounted, ref } from 'vue'
 import { app, type BalanceView, type DeviceAuthInfo, type PresetView, type ProviderInput, type ProviderView } from '../api'
 import { confirmDialog, toast } from '../ui'
-import { t, locale, monthDayLabel, formatNumber, formatNumberFull, quotaLabel, quotaValue } from '../i18n'
+import { t, monthDayLabel, formatNumber, formatNumberFull, quotaLabel, quotaValue } from '../i18n'
 import UsageDetail from '../components/UsageDetail.vue'
 
 const providers = ref<ProviderView[]>([])
@@ -258,8 +258,7 @@ function formatTime(value: string) { return value ? new Date(value).toLocaleStri
 function resetText(value: string) {
   const reset = new Date(value)
   const now = new Date()
-  const tag = locale.value === 'en' ? 'en-US' : 'zh-CN'
-  const time = reset.toLocaleTimeString(tag, { hour: '2-digit', minute: '2-digit' })
+  const time = reset.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
   if (reset.toDateString() === now.toDateString()) return time
   const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1)
   if (reset.toDateString() === tomorrow.toDateString()) return t('providers.tomorrow') + ' ' + time
