@@ -38,7 +38,9 @@ func replaceModel(body []byte, model string) ([]byte, error) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, fmt.Errorf("解析 Responses 请求: %w", err)
 	}
-	payload["model"] = mustJSON(model)
+	if model != "" {
+		payload["model"] = mustJSON(model)
+	}
 	return json.Marshal(payload)
 }
 

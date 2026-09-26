@@ -84,7 +84,7 @@ import { computed, onMounted, ref } from 'vue'
 import { app, type SettingsView } from '../api'
 import { applyLocale, applyTheme, t } from '../i18n'
 
-const settings = ref<SettingsView>({ listenHost: '127.0.0.1', listenPort: 8280, localKey: '', retainDays: 90, theme: 'dark', language: 'zh', globalProxy: '' })
+const settings = ref<SettingsView>({ listenHost: '127.0.0.1', listenPort: 8280, localKey: '', retainDays: 90, theme: 'light', language: 'zh', globalProxy: '' })
 const saved = ref(false)
 const error = ref('')
 const showKey = ref(false)

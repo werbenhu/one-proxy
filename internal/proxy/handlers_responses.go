@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/werbenhu/one-proxy/internal/protocol/anthropic"
+	"github.com/werbenhu/one-proxy/internal/protocol/convert"
 	"github.com/werbenhu/one-proxy/internal/provider"
 	"github.com/werbenhu/one-proxy/internal/router"
 )
@@ -48,59 +50,128 @@ func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 		h.writeChatUpstreamError(w, err)
 		return
 	}
+	// failed 上报失败并决定是否切换下一候选；返回 false 表示错误已写回客户端。
+	failed := func(t router.Target, start time.Time, callErr error, reasons *[]string) bool {
+		h.applyDirectFailure(t, callErr)
+		h.router.RecordUsage(router.RequestInfo{
+			ChannelID: t.Channel.ID, ChannelName: t.Channel.Name, ProviderID: t.Provider.ID,
+			ModelRequested: probe.Model, ModelUpstream: t.UpstreamModel,
+			Status: upstreamStatus(callErr), LatencyMs: time.Since(start).Milliseconds(), Error: callErr.Error(),
+		})
+		if !provider.MaySwitch(callErr) {
+			h.writeChatUpstreamError(w, callErr)
+			return false
+		}
+		*reasons = append(*reasons, t.Provider.Name+"："+callErr.Error())
+		return true
+	}
+	var anthReq *anthropic.Request
 	var reasons []string
 	for _, t := range targets {
 		if !h.registry.Available(t.Provider.ID) {
 			reasons = append(reasons, t.Provider.Name+" 正在冷却或鉴权失败")
 			continue
 		}
-		raw, ok := t.Adapter.(provider.RawForwardCapable)
-		if !ok || !supportsProtocol(raw, provider.ProtocolResponses) {
-			reasons = append(reasons, t.Provider.Name+" 不支持 Responses")
-			continue
-		}
-		fwdBody := body
-		if t.UpstreamModel != probe.Model {
-			fwdBody, err = rewriteModel(body, t.UpstreamModel)
-			if err != nil {
-				writeChatError(w, http.StatusBadRequest, "invalid_request_error", "重写 model 失败")
-				return
-			}
-		}
 		start := time.Now()
-		result, callErr := raw.ForwardRaw(r.Context(), provider.ProtocolResponses, fwdBody, nil, probe.Stream)
-		if callErr != nil {
-			h.applyDirectFailure(t, callErr)
+		if raw, ok := t.Adapter.(provider.RawForwardCapable); ok && supportsProtocol(raw, provider.ProtocolResponses) {
+			fwdBody := body
+			if t.UpstreamModel != probe.Model {
+				fwdBody, err = rewriteModel(body, t.UpstreamModel)
+				if err != nil {
+					writeChatError(w, http.StatusBadRequest, "invalid_request_error", "重写 model 失败")
+					return
+				}
+			}
+			result, callErr := raw.ForwardRaw(r.Context(), provider.ProtocolResponses, fwdBody, nil, probe.Stream)
+			if callErr != nil {
+				if !failed(t, start, callErr, &reasons) {
+					return
+				}
+				continue
+			}
+			ct := result.Header.Get("Content-Type")
+			if ct == "" {
+				ct = "application/json"
+			}
+			w.Header().Set("Content-Type", ct)
+			w.WriteHeader(result.StatusCode)
+			u := forwardResponsesBody(w, result, probe.Stream)
 			h.router.RecordUsage(router.RequestInfo{
 				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name, ProviderID: t.Provider.ID,
 				ModelRequested: probe.Model, ModelUpstream: t.UpstreamModel,
-				Status: upstreamStatus(callErr), LatencyMs: time.Since(start).Milliseconds(), Error: callErr.Error(),
+				Usage: u, Status: result.StatusCode, LatencyMs: time.Since(start).Milliseconds(),
 			})
-			if !provider.MaySwitch(callErr) {
-				h.writeChatUpstreamError(w, callErr)
+			return
+		}
+		// 上游不支持 Responses：走 canonical 转换路径
+		if anthReq == nil {
+			anthReq, err = convert.ResponsesToAnthropic(body)
+			if err != nil {
+				writeChatError(w, http.StatusBadRequest, "invalid_request_error", "转换 Responses 请求失败: "+err.Error())
 				return
 			}
-			reasons = append(reasons, t.Provider.Name+"："+callErr.Error())
+			anthReq.Model = probe.Model
+		}
+		attempt := *anthReq
+		attempt.Model = t.UpstreamModel
+		if probe.Stream {
+			events, callErr := t.Adapter.Stream(r.Context(), &attempt)
+			if callErr != nil {
+				if !failed(t, start, callErr, &reasons) {
+					return
+				}
+				continue
+			}
+			u := serveResponsesStream(w, events)
+			h.router.RecordUsage(router.RequestInfo{
+				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name, ProviderID: t.Provider.ID,
+				ModelRequested: probe.Model, ModelUpstream: t.UpstreamModel,
+				Usage: u, Status: http.StatusOK, LatencyMs: time.Since(start).Milliseconds(),
+			})
+			return
+		}
+		resp, callErr := t.Adapter.Invoke(r.Context(), &attempt)
+		if callErr != nil {
+			if !failed(t, start, callErr, &reasons) {
+				return
+			}
 			continue
 		}
-		ct := result.Header.Get("Content-Type")
-		if ct == "" {
-			ct = "application/json"
-		}
-		w.Header().Set("Content-Type", ct)
-		w.WriteHeader(result.StatusCode)
-		u := forwardResponsesBody(w, result, probe.Stream)
+		writeJSON(w, http.StatusOK, convert.AnthropicToResponses(resp))
 		h.router.RecordUsage(router.RequestInfo{
 			ChannelID: t.Channel.ID, ChannelName: t.Channel.Name, ProviderID: t.Provider.ID,
 			ModelRequested: probe.Model, ModelUpstream: t.UpstreamModel,
-			Usage: u, Status: result.StatusCode, LatencyMs: time.Since(start).Milliseconds(),
+			Usage: resp.Usage, Status: http.StatusOK, LatencyMs: time.Since(start).Milliseconds(),
 		})
 		return
 	}
 	if len(reasons) == 0 {
-		reasons = append(reasons, "没有支持 Responses 协议的可用提供商")
+		reasons = append(reasons, "没有可用的提供商")
 	}
 	writeChatError(w, http.StatusServiceUnavailable, "server_error", strings.Join(reasons, "；"))
+}
+
+// serveResponsesStream 把 canonical 事件流写成 Responses SSE，返回累计用量。
+func serveResponsesStream(w http.ResponseWriter, events <-chan anthropic.Event) anthropic.Usage {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	fl, _ := w.(http.Flusher)
+	conv := convert.NewResponsesStream()
+	u := anthropic.Usage{}
+	for ev := range events {
+		u.MergeEvent(ev)
+		for _, out := range conv.Handle(ev) {
+			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", out.Type, out.Data); err != nil {
+				return u
+			}
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+	}
+	return u
 }
 
 func supportsProtocol(a provider.RawForwardCapable, p provider.Protocol) bool {

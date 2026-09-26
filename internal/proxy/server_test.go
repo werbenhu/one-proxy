@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -593,5 +594,140 @@ func TestResponsesOpenAICompatibleFailover(t *testing.T) {
 	}
 	if registry.State("pv-a").Status != provider.StatusCooling {
 		t.Fatalf("首选提供商未冷却: %+v", registry.State("pv-a"))
+	}
+}
+
+// /v1/responses 转换路径端到端：anthropic-compat 上游不支持 Responses，
+// proxy 转成 canonical 调用再把响应转回 Responses 格式。
+func TestResponsesConvertAnthropicUpstream(t *testing.T) {
+	var hit map[string]json.RawMessage
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("上游路径: %s", r.URL.Path)
+		}
+		data, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(data, &hit)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_9","type":"message","role":"assistant","model":"glm-5.3",
+			"content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn",
+			"usage":{"input_tokens":9,"output_tokens":3}}`))
+	}))
+	defer up.Close()
+	store := config.NewStore(filepath.Join(t.TempDir(), "config.json"))
+	cfg := config.Default()
+	cfg.LocalKey = "testkey123"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "key-a", Enabled: true},
+	}
+	cfg.Channels = []config.Channel{{ID: "ch-glm", Name: "GLM", Model: "", Strategy: config.StrategyPriority, Enabled: true, Targets: []config.ChannelTarget{
+		{ProviderID: "pv-a", Priority: 10, Enabled: true},
+	}}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	registry := provider.NewRegistry()
+	registry.Register("pv-a", anthropiccompat.New(up.URL, "key-a", ""))
+	server := NewServer(store, registry)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/responses", strings.NewReader(
+		`{"model":"glm-5.3","instructions":"be brief","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d: %s", resp.StatusCode, data)
+	}
+	var out struct {
+		Object string           `json:"object"`
+		Status string           `json:"status"`
+		Output []map[string]any `json:"output"`
+		Usage  struct {
+			InputTokens  int64 `json:"input_tokens"`
+			OutputTokens int64 `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Object != "response" || out.Status != "completed" || len(out.Output) != 1 {
+		t.Fatalf("responses 响应: %+v", out)
+	}
+	content, _ := out.Output[0]["content"].([]any)
+	first, _ := content[0].(map[string]any)
+	if first["text"] != "hello" {
+		t.Fatalf("output_text: %+v", out.Output[0])
+	}
+	if out.Usage.InputTokens != 9 || out.Usage.OutputTokens != 3 {
+		t.Fatalf("usage: %+v", out.Usage)
+	}
+	// 上游收到的是 canonical anthropic 请求：instructions 进 system
+	if string(hit["system"]) != `"be brief"` {
+		t.Fatalf("上游 system: %s", hit["system"])
+	}
+	if string(hit["model"]) != `"glm-5.3"` {
+		t.Fatalf("上游 model（透传）: %s", hit["model"])
+	}
+}
+
+// /v1/responses 转换路径流式端到端：canonical SSE → Responses SSE 事件。
+func TestResponsesConvertAnthropicStream(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_s\",\"model\":\"glm-5.3\",\"usage\":{\"input_tokens\":5}}}\n\n")
+		fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+		fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n")
+		fmt.Fprintf(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+		fmt.Fprintf(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n")
+		fmt.Fprintf(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	}))
+	defer up.Close()
+	store := config.NewStore(filepath.Join(t.TempDir(), "config.json"))
+	cfg := config.Default()
+	cfg.LocalKey = "testkey123"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "key-a", Enabled: true},
+	}
+	cfg.Channels = []config.Channel{{ID: "ch-glm", Name: "GLM", Model: "", Strategy: config.StrategyPriority, Enabled: true, Targets: []config.ChannelTarget{
+		{ProviderID: "pv-a", Priority: 10, Enabled: true},
+	}}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	registry := provider.NewRegistry()
+	registry.Register("pv-a", anthropiccompat.New(up.URL, "key-a", ""))
+	server := NewServer(store, registry)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/responses", strings.NewReader(
+		`{"model":"glm-5.3","input":"hi","stream":true}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status %d: %s", resp.StatusCode, data)
+	}
+	data, _ := io.ReadAll(resp.Body)
+	body := string(data)
+	for _, want := range []string{
+		"event: response.created",
+		"event: response.output_text.delta",
+		`"delta":"hi"`,
+		"event: response.completed",
+		`"output_tokens":2`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("响应流缺少 %q:\n%s", want, body)
+		}
 	}
 }

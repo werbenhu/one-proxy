@@ -22,6 +22,11 @@ func convertChatRequest(body []byte, model string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if model == "" {
+		var m string
+		_ = json.Unmarshal(source["model"], &m)
+		model = m
+	}
 	target := map[string]json.RawMessage{"model": mustJSON(model), "input": mustJSON(input)}
 	copyFields(target, source, "stream", "temperature", "top_p", "presence_penalty", "frequency_penalty", "seed", "user", "parallel_tool_calls", "metadata", "store", "service_tier", "stop")
 	if raw := firstJSON(source["max_completion_tokens"], source["max_tokens"]); !isEmptyJSON(raw) {

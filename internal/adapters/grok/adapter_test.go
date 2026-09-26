@@ -79,6 +79,9 @@ func TestForwardRawProtocols(t *testing.T) {
 	if !strings.Contains(string(body), "output_text") {
 		t.Fatalf("chat 直通应返回 Responses 原文: %s", body)
 	}
+	if string(hit["model"]) != `"grok-4.5"` {
+		t.Fatalf("chat 直通 model 丢失: %s", hit["model"])
+	}
 
 	// responses 直通（恒等，只透传）
 	result2, err := a.ForwardRaw(context.Background(), provider.ProtocolResponses,
@@ -89,6 +92,9 @@ func TestForwardRawProtocols(t *testing.T) {
 	result2.Body.Close()
 	if path != "/responses" {
 		t.Fatalf("responses 直通路径: %s", path)
+	}
+	if string(hit["model"]) != `"grok-4.5"` {
+		t.Fatalf("responses 直通 model 丢失: %s", hit["model"])
 	}
 
 	// 不支持的协议报错

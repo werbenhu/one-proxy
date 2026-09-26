@@ -5,7 +5,7 @@ export type Locale = 'zh' | 'en'
 export type Theme = 'dark' | 'light'
 
 export const locale = ref<Locale>('zh')
-export const theme = ref<Theme>('dark')
+export const theme = ref<Theme>('light')
 
 // 词条：key → { zh, en }。视图词条命名空间：nav.* / common.* / settings.* /
 // providers.* / channels.* / usage.* / usageDetail.*。
@@ -208,7 +208,7 @@ export function applyLocale(value: string) {
 
 // initUI 应用启动时根据设置初始化主题与语言。
 export function initUI(settings: { theme?: string; language?: string }) {
-  applyTheme(settings.theme || 'dark')
+  applyTheme(settings.theme || 'light')
   applyLocale(settings.language || 'zh')
 }
 

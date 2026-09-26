@@ -48,6 +48,9 @@ func convertMessagesRequest(body []byte, model string) ([]byte, ResponseOptions,
 	if len(input) == 0 {
 		return nil, ResponseOptions{}, errors.New("messages 中没有可发送的 user 或 assistant 内容")
 	}
+	if model == "" {
+		model = request.Model
+	}
 	target := map[string]any{
 		"model": model, "input": input, "stream": request.Stream,
 		"max_output_tokens": request.MaxTokens, "store": false,
