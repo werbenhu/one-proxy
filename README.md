@@ -1,134 +1,52 @@
 # OneProxy
 
-本地多供应商 LLM 中转代理 — Golang + Wails 桌面应用（个人工具）。
+简体中文 | [English](README.en.md)
 
-把手里的供应商（订阅 coding plan + 按 token 计费 API）合并成一套本地 API：多个同类套餐自动互备，用量统一记账。
+把多个 AI 服务账户放在一起管理，让不同客户端通过同一个本地入口使用。适合同时使用订阅套餐和按量付费 API 的个人用户。
 
-## 能力
+![OneProxy 提供商页面：账户状态、今日用量与额度](assets/screenshots/providers.png)
 
-- **三种入口**：Anthropic `/v1/messages`（主力，Claude Code 用）、OpenAI Chat `/v1/chat/completions`、OpenAI Responses `/v1/responses`（支持 Grok 和兼容上游直通）；`GET /v1/models`
-- **提供商账户**：独立管理 z.ai / bigmodel / kimi / minimax / deepseek / openrouter / opencode zen / cmdc-proxy / Ollama Cloud / Grok（OAuth）以及自定义兼容端点的凭证、连接状态、模型列表和额度
-- **对外渠道**：一个渠道暴露一个模型，内部可绑定多个提供商和各自的上游模型；支持优先级主备与加权轮询
-- **故障切换**：429 冷却切换、401/403 标记鉴权失败、400 按 body 细分；全不可用返回聚合人话错误
-- **额度查询**：支持 DeepSeek/Kimi 账户余额、z.ai/BigModel/MiniMax Coding 套餐额度、Command Code 额度和 OpenRouter Credits，也可配置自定义查询地址
-- **协议保真**：canonical=Anthropic；请求内容字段不深度解析原样传输；未知 block/字段保留；`anthropic-beta`/`anthropic-version` 头白名单透传
-- **用量统计**：SQLite 记录对外渠道、实际提供商、对外/上游模型；渠道汇总支持今天/7天/30天/全部，提供商页显示今日 Token
-- **托盘常驻**：关窗口不退出
+## 功能
 
-按个人工具裁剪（不做）：配额前置预判（只信 429）、分组多租户、图表、单提供商多密钥。
+- **统一管理提供商**：内置 z.ai、智谱 BigModel、Kimi、MiniMax、DeepSeek、OpenRouter、Grok、Ollama Cloud 等预设，也能添加自定义兼容服务。可测试连接、查看模型、查询支持的账户额度，并导入或导出提供商配置。
+- **按渠道组织模型**：一个对外模型可绑定多个提供商账户；按优先级安排主备，或按权重分配请求。
+- **自动切换**：遇到限流或上游不可用时，尝试其他可用账户，减少手动换号。
+- **查看用量**：在提供商页查看今日 Token 和账户额度，在用量页查看渠道与提供商的使用记录。
+- **接入常用客户端**：提供 Anthropic、OpenAI Chat 和 OpenAI Responses 兼容入口；设置页可直接复制客户端连接信息。
+- **桌面使用**：支持中文、英文和深浅色主题；关闭窗口后可从系统托盘重新打开。
 
-## 快速开始
+## 支持的提供商与模型
 
-### 桌面模式
+OneProxy 不限定客户端只能使用某一家模型。下表是当前内置预设给出的**上游模型示例**；如果上游支持模型查询，添加账户后可在「提供商」查看模型，并在「渠道」中填写实际可用的模型名。
 
-```
-wails build
-build\bin\OneProxy.exe
-```
+| 提供商预设 | 上游模型示例 |
+| --- | --- |
+| z.ai Coding Plan、智谱 BigModel Coding Plan | `glm-5.3` |
+| Kimi Coding 套餐 | `kimi-for-coding` |
+| Kimi 开放平台、Kimi 国际站 | `kimi-k3` |
+| MiniMax Token Plan | `MiniMax-M3` |
+| DeepSeek | `deepseek-chat` |
+| Grok (xAI) | `grok-4.5` |
+| OpenRouter | `openai/gpt-5.2` 等账户可用模型 |
+| [OpenCode Zen](https://opencode.ai/docs/zen) | `deepseek-v4-flash`、`minimax-m3`、`glm-5.3`、`kimi-k3` |
+| [Command Code（OpenAI）](https://commandcode.ai/docs/provider) | `deepseek/deepseek-v4-flash`、`deepseek/deepseek-v4-pro` |
+| [Command Code（Anthropic）](https://commandcode.ai/docs/provider) | `claude-sonnet-4-6`、`claude-opus-5` |
+| [Ollama Cloud](https://ollama.com/blog/cloud-models) | `qwen3-coder:480b-cloud`、`gpt-oss:120b-cloud`、`gpt-oss:20b-cloud` |
+| 自定义兼容服务（如连接本地 Ollama） | `qwen3:32b`、`llama3.3:70b`、`mistral:7b` 等；以所连服务实际提供的模型 ID 为准 |
 
-界面里先在「提供商」添加账户并测试/查询额度，再在「渠道」创建对外模型并绑定一个或多个提供商。
+渠道可以把客户端使用的模型名映射到不同的上游模型。例如，把 `claude-sonnet-4-6` 分别绑定到 `glm-5.3` 和 `kimi-k3`，客户端仍使用同一个模型名，OneProxy 负责选择账户和切换。这里的 `claude-sonnet-4-6` 是对外模型名，并不表示 OneProxy 提供 Claude 模型或订阅。
 
-### Command Code 与 Ollama Cloud
+以上都是示例，不代表所有账户都有权限使用；具体模型和接口以提供商当前开放的列表为准。
 
-- **cmdc-proxy**：先启动 [cmdc-proxy](https://github.com/werbenhu/cmdc-proxy)，在 OneProxy 的「提供商」选择 `cmdc-proxy（本地代理）` 预设。默认地址 `http://127.0.0.1:55990/v1`，API Key 填 cmdc-proxy 的客户端密钥。OneProxy 的渠道可将对外模型映射为 `glm-5` 等 cmdc-proxy 支持的模型。
-- **额度**：cmdc-proxy 的客户端密钥可能无法查询 Command Code 原始额度。若使用客户端密钥，在「额度查询设置」填入 Command Code 原始 `user_` Key 作为专用查询密钥。
-- **官方 Command Code Provider API**：分别提供 OpenAI Chat/Responses 和 Anthropic Messages 端点，OneProxy 为此提供两个预设；开放模型与 Claude 模型须选择对应协议。Command Code CLI 使用的 `/alpha/generate` 是专有协议，与这些兼容端点不同。官方文档称 Go 套餐不开放 Provider API，其他套餐的权限以账户为准。
-- **Ollama Cloud**：选择 `Ollama Cloud` 预设，填 Ollama API Key；默认地址 `https://ollama.com/v1`，渠道中的上游模型填账户实际可用的云端模型 ID。
+## 下载与使用
 
-### CLI 模式（调试）
+从 [Releases](../../releases) 下载适合系统的桌面程序。打开后，在「提供商」添加账户，再到「渠道」绑定要使用的模型；最后到「设置」复制客户端连接信息。
 
-```
-OneProxy.exe cli
-```
+| 平台 | 下载文件 |
+| --- | --- |
+| Windows x64 | `OneProxy-*-windows-amd64.exe` |
+| Windows ARM64 | `OneProxy-*-windows-arm64.exe` |
+| macOS Intel | `OneProxy-*-darwin-amd64.app.zip` |
+| macOS Apple Silicon | `OneProxy-*-darwin-arm64.app.zip` |
 
-读 `%AppData%\OneProxy\config.json` 并启动代理，不启 GUI。
-
-### 手配 config.json 示例
-
-```json
-{
-  "listenHost": "127.0.0.1",
-  "listenPort": 8280,
-  "localKey": "自动生成",
-  "retainDays": 90,
-  "providers": [
-    {
-      "id": "pv-kimi-a",
-      "name": "Kimi 套餐 A",
-      "vendor": "kimi",
-      "type": "anthropic-compat",
-      "baseUrl": "https://api.moonshot.cn/anthropic",
-      "apiKey": "sk-xxx",
-      "balanceKind": "moonshot",
-      "enabled": true
-    },
-    {
-      "id": "pv-kimi-b",
-      "name": "Kimi 套餐 B（备用）",
-      "vendor": "kimi",
-      "type": "anthropic-compat",
-      "baseUrl": "https://api.moonshot.cn/anthropic",
-      "apiKey": "sk-yyy",
-      "balanceKind": "moonshot",
-      "enabled": true
-    }
-  ],
-  "channels": [
-    {
-      "id": "ch-claude-sonnet",
-      "name": "Claude Sonnet",
-      "model": "claude-sonnet-4-6",
-      "strategy": "priority",
-      "targets": [
-        {"providerId": "pv-kimi-a", "upstreamModel": "kimi-k3", "priority": 10, "weight": 1, "enabled": true},
-        {"providerId": "pv-kimi-b", "upstreamModel": "kimi-k3", "priority": 5, "weight": 1, "enabled": true}
-      ],
-      "enabled": true
-    }
-  ]
-}
-```
-
-A 用完（429）自动切 B，冷却期满回 A。
-
-### 客户端接入
-
-Claude Code：
-
-```bash
-export ANTHROPIC_BASE_URL="http://127.0.0.1:8280"
-export ANTHROPIC_API_KEY="<本地密钥>"
-```
-
-OpenAI 客户端：
-
-```bash
-export OPENAI_BASE_URL="http://127.0.0.1:8280/v1"
-export OPENAI_API_KEY="<本地密钥>"
-```
-
-强制指定渠道/提供商：在 BASE_URL 后加路径前缀，如 `http://127.0.0.1:8280/<渠道ID>`（OpenAI 客户端则是 `.../v1` 前插入，如 `http://127.0.0.1:8280/<渠道ID>/v1`）。此时 model 字段原样透传或按渠道映射处理，OpenRouter 的 `org/model` 模型名不受影响。
-
-## 架构
-
-```
-proxy(入口/鉴权/SSE) → channel(对外模型/调度策略) → provider account
-                              ↓                         ├─ anthropiccompat
-                        router(冷却/切换)                ├─ openaicompat
-usage(SQLite 记账) ← 路由埋点回调                       └─ grok
-```
-
-- 新增标准兼容供应商：在提供商页选「自定义」预设填 BaseURL，零代码
-- 新增专有供应商：实现 `provider.Adapter` 接口 + main 里 import
-
-Logo 源文件为 [oneproxy-logo.svg](frontend/src/assets/oneproxy-logo.svg) 和 [oneproxy-mark.svg](frontend/src/assets/oneproxy-mark.svg)；运行 `tools/generate-brand.ps1` 可同步生成 Windows 应用与托盘图标。
-
-包结构、设计决策与裁剪理由见 [plan.md](plan.md)。
-
-## 开发
-
-```
-go test ./...        # 后端测试
-wails dev            # 桌面开发模式
-wails build          # 打 Windows 包
-```
+> 账户额度是否可查询取决于提供商；部分服务需单独填写额度查询密钥。

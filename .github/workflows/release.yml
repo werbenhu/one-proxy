@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag (for example v1.0.0); leave empty to build artifacts only'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: '22.12.0'
+  PNPM_VERSION: '10.33.4'
+  WAILS_VERSION: 'v2.12.0'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - name: Resolve release version
+        id: version
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_TAG" ]]; then
+            VERSION="$INPUT_TAG"
+            PUBLISH=true
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="$GITHUB_REF_NAME"
+            PUBLISH=true
+          else
+            VERSION="dev-${GITHUB_SHA::7}"
+            PUBLISH=false
+          fi
+          if [[ "$PUBLISH" == true && ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must look like v1.0.0" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    name: Build ${{ matrix.slug }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows/amd64
+            slug: windows-amd64
+            os: windows-latest
+          - platform: windows/arm64
+            slug: windows-arm64
+            os: windows-latest
+          - platform: darwin/amd64
+            slug: darwin-amd64
+            os: macos-15-intel
+          - platform: darwin/arm64
+            slug: darwin-arm64
+            os: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install Wails CLI
+        shell: bash
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+      - name: Build desktop app
+        shell: bash
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          wails build -clean -trimpath -platform "${{ matrix.platform }}" -o OneProxy
+      - name: Package desktop app
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SLUG: ${{ matrix.slug }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          if [[ "$SLUG" == windows-* ]]; then
+            # Wails may emit an extensionless PE file when -o is specified.
+            if [[ -f build/bin/OneProxy.exe ]]; then
+              SRC=build/bin/OneProxy.exe
+            else
+              SRC=build/bin/OneProxy
+            fi
+            test -f "$SRC"
+            cp "$SRC" "dist/OneProxy-${VERSION}-${SLUG}.exe"
+          else
+            test -d build/bin/OneProxy.app
+            (cd build/bin && zip -qry "${GITHUB_WORKSPACE}/dist/OneProxy-${VERSION}-${SLUG}.app.zip" OneProxy.app)
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OneProxy-${{ needs.prepare.outputs.version }}-${{ matrix.slug }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: OneProxy-${{ needs.prepare.outputs.version }}-*
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.version }}
+          name: OneProxy ${{ needs.prepare.outputs.version }}
+          generate_release_notes: true
+          files: release-assets/*
+          fail_on_unmatched_files: true
