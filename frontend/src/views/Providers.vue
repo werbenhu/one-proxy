@@ -18,7 +18,7 @@
         </div>
         <div class="provider-stat">
           <span>{{ t('providers.todayTokens') }}</span>
-          <b>{{ formatNumber(provider.todayTokens) }}</b>
+          <b :title="formatNumberFull(provider.todayTokens)">{{ formatNumber(provider.todayTokens) }}</b>
           <button class="link-button" @click="openUsage(provider)">{{ t('providers.detail') }}</button>
         </div>
         <div class="provider-stat balance-cell">
@@ -125,7 +125,7 @@
 import { onMounted, ref } from 'vue'
 import { app, type BalanceView, type DeviceAuthInfo, type PresetView, type ProviderInput, type ProviderView } from '../api'
 import { confirmDialog, toast } from '../ui'
-import { t, monthDayLabel } from '../i18n'
+import { t, monthDayLabel, formatNumber, formatNumberFull } from '../i18n'
 import UsageDetail from '../components/UsageDetail.vue'
 
 const providers = ref<ProviderView[]>([])
@@ -232,7 +232,6 @@ function withProxyHint(e: unknown): string {
 }
 async function startOAuth() { try { oauthInfo.value = await app().StartGrokDeviceAuth(form.value.ID) } catch (e) { formError.value = withProxyHint(e) } }
 async function pollOAuth() { if (!oauthInfo.value) return; try { await app().CompleteGrokDeviceAuth(form.value.ID, oauthInfo.value.deviceCode); oauthInfo.value = null; toast(t('providers.authSuccess')) } catch (e) { formError.value = withProxyHint(e) } }
-function formatNumber(value: number) { return new Intl.NumberFormat('zh-CN').format(value) }
 function formatTime(value: string) { return value ? new Date(value).toLocaleString() : '' }
 function resetText(value: string) {
   const reset = new Date(value)

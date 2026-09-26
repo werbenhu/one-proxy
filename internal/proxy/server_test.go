@@ -418,6 +418,123 @@ func TestResponsesEndpointDirect(t *testing.T) {
 	}
 }
 
+// /v1/responses 直通路径也要记账（raw 转发不经 Invoke/Stream）。
+func TestResponsesUsageRecorded(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_1","object":"response","model":"grok-4.5","output":[],"usage":{"input_tokens":12,"output_tokens":5,"input_tokens_details":{"cached_tokens":4}}}`))
+	}))
+	defer up.Close()
+	dir := t.TempDir()
+	store := config.NewStore(dir + "/config.json")
+	cfg := config.Default()
+	cfg.LocalKey = "testkey123"
+	cfg.Channels = []config.Channel{
+		{ID: "ch-grok", Name: "Grok", Type: config.TypeGrok, BaseURL: up.URL, APIKey: "xk",
+			Models: []string{"grok-4.5"}, Enabled: true},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	registry := provider.NewRegistry()
+	registry.Register("ch-grok", grokadapter.New("xk", up.URL, ""))
+	srv := NewServer(store, registry)
+	dbPath := filepath.Join(t.TempDir(), "u3.db")
+	if err := srv.AttachUsage(dbPath, "api"); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	defer srv.CloseUsage()
+
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/responses", strings.NewReader(`{"model":"grok-4.5","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// 等异步 recorder 刷写（轮询至多 2s）
+	deadline := time.Now().Add(2 * time.Second)
+	var rows []usage.AggRow
+	for time.Now().Before(deadline) {
+		rows, err = srv.UsageStore().Summary(time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("responses 埋点未落库: %+v", rows)
+	}
+	if rows[0].InputTokens != 12 || rows[0].OutputTokens != 5 || rows[0].CacheRead != 4 {
+		t.Fatalf("responses token 记账: %+v", rows[0])
+	}
+}
+
+// 流式直通：tee 旁路从 response.completed 事件取 usage 记账。
+func TestResponsesStreamUsageRecorded(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":9,\"output_tokens\":3}}}\n\n"))
+	}))
+	defer up.Close()
+	dir := t.TempDir()
+	store := config.NewStore(dir + "/config.json")
+	cfg := config.Default()
+	cfg.LocalKey = "testkey123"
+	cfg.Channels = []config.Channel{
+		{ID: "ch-grok", Name: "Grok", Type: config.TypeGrok, BaseURL: up.URL, APIKey: "xk",
+			Models: []string{"grok-4.5"}, Enabled: true},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	registry := provider.NewRegistry()
+	registry.Register("ch-grok", grokadapter.New("xk", up.URL, ""))
+	srv := NewServer(store, registry)
+	dbPath := filepath.Join(t.TempDir(), "u4.db")
+	if err := srv.AttachUsage(dbPath, "api"); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	defer srv.CloseUsage()
+
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/responses", strings.NewReader(`{"model":"grok-4.5","input":"hi","stream":true}`))
+	req.Header.Set("Authorization", "Bearer testkey123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "response.output_text.delta") {
+		t.Fatalf("流式直通保真: %s", body)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var rows []usage.AggRow
+	for time.Now().Before(deadline) {
+		rows, err = srv.UsageStore().Summary(time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(rows) != 1 || rows[0].InputTokens != 9 || rows[0].OutputTokens != 3 {
+		t.Fatalf("流式 responses 记账: %+v", rows)
+	}
+}
+
 func TestResponsesOpenAICompatibleFailover(t *testing.T) {
 	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"quota"}`, http.StatusTooManyRequests)

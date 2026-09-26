@@ -10,7 +10,7 @@
         <template v-for="(v, i) in s.values" :key="i">
           <circle v-if="showDots" :cx="xAt(i)" :cy="yAt(v)" r="1.8" :fill="s.color" />
           <circle :cx="xAt(i)" :cy="yAt(v)" r="5" fill="transparent">
-            <title>{{ s.name }} · {{ dayLabel(days[i]) }} · {{ formatNumber(v) }}</title>
+            <title>{{ s.name }} · {{ dayLabel(days[i]) }} · {{ formatNumberFull(v) }}</title>
           </circle>
         </template>
       </g>
@@ -21,7 +21,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { monthDayLabel } from '../i18n'
+import { monthDayLabel, formatNumberFull } from '../i18n'
 
 const props = defineProps<{ days: string[]; series: { name: string; values: number[] }[] }>()
 
@@ -65,5 +65,4 @@ const xLabels = computed(() => {
     .filter(({ i }) => n <= 10 || i % 5 === 0 || i === n - 1)
 })
 function dayLabel(key: string): string { return monthDayLabel(Number(key.slice(5, 7)), Number(key.slice(8, 10))) }
-function formatNumber(value: number) { return new Intl.NumberFormat('zh-CN').format(value) }
 </script>

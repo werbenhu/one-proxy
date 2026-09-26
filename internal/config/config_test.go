@@ -112,9 +112,13 @@ func TestValidateModernProviderAndChannel(t *testing.T) {
 	cfg := Default()
 	cfg.Providers = []ProviderAccount{{ID: "pv-a", Name: "A", Type: TypeOpenAICompat, BaseURL: "https://example.com/v1", APIKey: "k", Enabled: true}}
 	cfg.Channels = []Channel{{ID: "ch-public", Name: "Public", Model: "coding", Strategy: StrategyRoundRobin, Enabled: true, Targets: []ChannelTarget{{ProviderID: "pv-a", UpstreamModel: "model-a", Weight: 1, Enabled: true}}}}
-	if err := Validate(cfg); err != nil { t.Fatal(err) }
+	if err := Validate(cfg); err != nil {
+		t.Fatal(err)
+	}
 	cfg.Channels[0].Targets[0].ProviderID = "missing"
-	if err := Validate(cfg); err == nil || !strings.Contains(err.Error(), "不存在") { t.Fatalf("应拒绝悬空绑定: %v", err) }
+	if err := Validate(cfg); err == nil || !strings.Contains(err.Error(), "不存在") {
+		t.Fatalf("应拒绝悬空绑定: %v", err)
+	}
 }
 
 // 不同渠道允许暴露相同的对外模型名。

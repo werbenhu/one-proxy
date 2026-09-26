@@ -88,6 +88,7 @@ export namespace config {
 	    balanceUrl?: string;
 	    balanceKey?: string;
 	    proxyUrl?: string;
+	    useProxy?: boolean;
 	    enabled: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -108,6 +109,7 @@ export namespace config {
 	        this.balanceUrl = source["balanceUrl"];
 	        this.balanceKey = source["balanceKey"];
 	        this.proxyUrl = source["proxyUrl"];
+	        this.useProxy = source["useProxy"];
 	        this.enabled = source["enabled"];
 	    }
 	}
@@ -353,7 +355,7 @@ export namespace service {
 	    balanceKind: string;
 	    balanceUrl: string;
 	    balanceKeyHint: string;
-	    proxyUrl: string;
+	    useProxy: boolean;
 	    enabled: boolean;
 	    status: string;
 	    coolingUntil?: string;
@@ -379,7 +381,7 @@ export namespace service {
 	        this.balanceKind = source["balanceKind"];
 	        this.balanceUrl = source["balanceUrl"];
 	        this.balanceKeyHint = source["balanceKeyHint"];
-	        this.proxyUrl = source["proxyUrl"];
+	        this.useProxy = source["useProxy"];
 	        this.enabled = source["enabled"];
 	        this.status = source["status"];
 	        this.coolingUntil = source["coolingUntil"];
@@ -396,6 +398,7 @@ export namespace service {
 	    retainDays: number;
 	    theme: string;
 	    language: string;
+	    globalProxy: string;
 	    running: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -410,6 +413,7 @@ export namespace service {
 	        this.retainDays = source["retainDays"];
 	        this.theme = source["theme"];
 	        this.language = source["language"];
+	        this.globalProxy = source["globalProxy"];
 	        this.running = source["running"];
 	    }
 	}

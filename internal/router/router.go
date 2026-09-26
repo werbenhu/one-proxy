@@ -68,6 +68,9 @@ type RequestInfo struct {
 // SetUsageHook 注入用量回调。
 func (r *Router) SetUsageHook(fn func(RequestInfo)) { r.onUsage = fn }
 
+// RecordUsage 供原始转发路径（Responses 入口）手动记账。
+func (r *Router) RecordUsage(info RequestInfo) { r.emitUsage(info) }
+
 func (r *Router) emitUsage(info RequestInfo) {
 	if r.onUsage != nil {
 		r.onUsage(info)

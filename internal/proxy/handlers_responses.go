@@ -1,12 +1,15 @@
 package proxy
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/werbenhu/one-proxy/internal/protocol/anthropic"
 	"github.com/werbenhu/one-proxy/internal/provider"
 	"github.com/werbenhu/one-proxy/internal/router"
 )
@@ -64,9 +67,15 @@ func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		start := time.Now()
 		result, callErr := raw.ForwardRaw(r.Context(), provider.ProtocolResponses, fwdBody, nil, probe.Stream)
 		if callErr != nil {
 			h.applyDirectFailure(t, callErr)
+			h.router.RecordUsage(router.RequestInfo{
+				ChannelID: t.Channel.ID, ChannelName: t.Channel.Name, ProviderID: t.Provider.ID,
+				ModelRequested: probe.Model, ModelUpstream: t.UpstreamModel,
+				Status: upstreamStatus(callErr), LatencyMs: time.Since(start).Milliseconds(), Error: callErr.Error(),
+			})
 			if !provider.MaySwitch(callErr) {
 				h.writeChatUpstreamError(w, callErr)
 				return
@@ -74,14 +83,18 @@ func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 			reasons = append(reasons, t.Provider.Name+"："+callErr.Error())
 			continue
 		}
-		defer result.Body.Close()
 		ct := result.Header.Get("Content-Type")
 		if ct == "" {
 			ct = "application/json"
 		}
 		w.Header().Set("Content-Type", ct)
 		w.WriteHeader(result.StatusCode)
-		_, _ = io.Copy(w, result.Body)
+		u := forwardResponsesBody(w, result, probe.Stream)
+		h.router.RecordUsage(router.RequestInfo{
+			ChannelID: t.Channel.ID, ChannelName: t.Channel.Name, ProviderID: t.Provider.ID,
+			ModelRequested: probe.Model, ModelUpstream: t.UpstreamModel,
+			Usage: u, Status: result.StatusCode, LatencyMs: time.Since(start).Milliseconds(),
+		})
 		return
 	}
 	if len(reasons) == 0 {
@@ -120,4 +133,95 @@ func rewriteModel(body []byte, model string) ([]byte, error) {
 	}
 	m["model"] = encoded
 	return json.Marshal(m)
+}
+
+// forwardResponsesBody 把上游响应写给客户端并统计 token 用量（tee 旁路）。
+// 非流式解析响应 JSON 的 usage；流式缓存 SSE（上限 8MB），从
+// response.completed/incomplete/failed 终态事件里取 response.usage。
+func forwardResponsesBody(w http.ResponseWriter, result *provider.RawResult, stream bool) anthropic.Usage {
+	defer result.Body.Close()
+	if !stream {
+		data, err := io.ReadAll(result.Body)
+		if err != nil {
+			return anthropic.Usage{}
+		}
+		_, _ = w.Write(data)
+		var parsed struct {
+			Usage responsesUsage `json:"usage"`
+		}
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			return anthropic.Usage{}
+		}
+		return parsed.Usage.canonical()
+	}
+	sniff := &cappedBuffer{max: 8 << 20}
+	_, _ = io.Copy(w, io.TeeReader(result.Body, sniff))
+	return sniff.sseUsage()
+}
+
+// responsesUsage OpenAI Responses 的 usage 结构。
+type responsesUsage struct {
+	InputTokens        int `json:"input_tokens"`
+	OutputTokens       int `json:"output_tokens"`
+	InputTokensDetails struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
+}
+
+func (u responsesUsage) canonical() anthropic.Usage {
+	return anthropic.Usage{
+		InputTokens:          int64(u.InputTokens),
+		OutputTokens:         int64(u.OutputTokens),
+		CacheReadInputTokens: int64(u.InputTokensDetails.CachedTokens),
+	}
+}
+
+// cappedBuffer tee 旁路缓冲：写满 max 后丢弃，但始终报告全部写入。
+type cappedBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if remain := c.max - c.buf.Len(); remain > 0 {
+		if remain > len(p) {
+			remain = len(p)
+		}
+		c.buf.Write(p[:remain])
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) sseUsage() anthropic.Usage {
+	var u anthropic.Usage
+	for _, line := range bytes.Split(c.buf.Bytes(), []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data: ")) {
+			continue
+		}
+		var ev struct {
+			Type     string `json:"type"`
+			Response struct {
+				Usage responsesUsage `json:"usage"`
+			} `json:"response"`
+		}
+		if err := json.Unmarshal(line[len("data: "):], &ev); err != nil {
+			continue
+		}
+		switch ev.Type {
+		case "response.completed", "response.incomplete", "response.failed":
+			if ev.Response.Usage.InputTokens > 0 || ev.Response.Usage.OutputTokens > 0 {
+				u = ev.Response.Usage.canonical()
+			}
+		}
+	}
+	return u
+}
+
+func upstreamStatus(err error) int {
+	var ue *provider.UpstreamError
+	if errors.As(err, &ue) {
+		return ue.StatusCode
+	}
+	return 0
 }

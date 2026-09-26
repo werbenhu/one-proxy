@@ -223,3 +223,13 @@ export function monthDayLabel(month: number, day: number): string {
 export function monthName(month: number): string {
   return locale.value === 'en' ? MONTHS_EN[(month - 1 + 12) % 12] : month + '月'
 }
+
+// formatNumber 紧凑数字：zh「12.5万 / 1.2亿」en「125K / 1.2M」。
+export function formatNumber(value: number): string {
+  return new Intl.NumberFormat(locale.value === 'en' ? 'en' : 'zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(value)
+}
+
+// formatNumberFull 完整分组数字（悬浮提示等需要精确值的场景）。
+export function formatNumberFull(value: number): string {
+  return new Intl.NumberFormat(locale.value === 'en' ? 'en' : 'zh-CN').format(value)
+}

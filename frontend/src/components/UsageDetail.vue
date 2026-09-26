@@ -46,7 +46,7 @@
               <div v-if="mode !== 'week'" class="heatmap">
                 <div v-for="(col, i) in heatCells" :key="i" class="heatmap-col">
                   <div v-for="(cell, j) in col" :key="j" class="heatmap-cell" :class="cell.date ? 'hm-' + cell.level : 'hm-blank'"
-                    :title="cell.date ? fmtDay(cell.date) + t('usageDetail.colon') + formatNumber(cell.value) + ' ' + t('common.tokens') : ''"></div>
+                    :title="cell.date ? fmtDay(cell.date) + t('usageDetail.colon') + formatNumberFull(cell.value) + ' ' + t('common.tokens') : ''"></div>
                 </div>
               </div>
               <div v-else class="heatmap-week">
@@ -75,7 +75,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { app, type ProviderUsageView, type ProviderView } from '../api'
-import { t, monthDayLabel, monthName } from '../i18n'
+import { t, monthDayLabel, monthName, formatNumber, formatNumberFull } from '../i18n'
 import { toast } from '../ui'
 import TrendChart from './TrendChart.vue'
 
@@ -104,7 +104,6 @@ function dayKey(d: Date): string {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
 }
 function fmtDay(d: Date): string { return monthDayLabel(d.getMonth() + 1, d.getDate()) }
-function formatNumber(value: number) { return new Intl.NumberFormat('zh-CN').format(value) }
 function levelOf(v: number, max: number): number {
   if (v <= 0 || max <= 0) return 0
   return Math.min(4, Math.max(1, Math.ceil((v / max) * 4)))
@@ -163,7 +162,7 @@ const weekBlocks = computed(() => {
   const max = Math.max(0, ...blocks.map(b => b.value))
   return blocks.map(b => ({
     level: levelOf(b.value, max),
-    tip: b.first && b.last ? fmtDay(b.first) + ' ~ ' + fmtDay(b.last) + t('usageDetail.colon') + formatNumber(b.value) + ' ' + t('common.tokens') : '',
+    tip: b.first && b.last ? fmtDay(b.first) + ' ~ ' + fmtDay(b.last) + t('usageDetail.colon') + formatNumberFull(b.value) + ' ' + t('common.tokens') : '',
   }))
 })
 

@@ -84,8 +84,8 @@ type Config struct {
 	ListenPort  int               `json:"listenPort"`
 	LocalKey    string            `json:"localKey"`
 	RetainDays  int               `json:"retainDays"`
-	Theme       string            `json:"theme,omitempty"`    // dark | light（默认 dark）
-	Language    string            `json:"language,omitempty"` // zh | en（默认 zh）
+	Theme       string            `json:"theme,omitempty"`       // dark | light（默认 dark）
+	Language    string            `json:"language,omitempty"`    // zh | en（默认 zh）
 	GlobalProxy string            `json:"globalProxy,omitempty"` // 全局 HTTP 代理（如 http://127.0.0.1:7897），提供商勾选「使用代理」时生效
 	Providers   []ProviderAccount `json:"providers"`
 	Channels    []Channel         `json:"channels"`

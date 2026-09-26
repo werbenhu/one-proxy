@@ -25,10 +25,10 @@
           <td>{{ r.channelName }}</td>
           <td>{{ r.modelRequested }}</td>
           <td class="muted">{{ r.modelUpstream }}</td>
-          <td>{{ r.requests }}</td>
-          <td>{{ r.inputTokens }}</td>
-          <td>{{ r.outputTokens }}</td>
-          <td>{{ r.cacheReadTokens }}</td>
+          <td>{{ formatNumber(r.requests) }}</td>
+          <td>{{ formatNumber(r.inputTokens) }}</td>
+          <td>{{ formatNumber(r.outputTokens) }}</td>
+          <td>{{ formatNumber(r.cacheReadTokens) }}</td>
           <td>{{ r.errors || '' }}</td>
         </tr>
         <tr v-if="rows.length === 0">
@@ -42,7 +42,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { app, type AggRow, type ModelDayTokens } from '../api'
-import { t } from '../i18n'
+import { t, formatNumber } from '../i18n'
 import TrendChart from '../components/TrendChart.vue'
 
 const rows = ref<AggRow[]>([])

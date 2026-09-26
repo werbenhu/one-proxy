@@ -55,8 +55,8 @@ type SettingsView struct {
 	ListenPort  int    `json:"listenPort"`
 	LocalKey    string `json:"localKey"` // 本地密钥需要展示给用户复制
 	RetainDays  int    `json:"retainDays"`
-	Theme       string `json:"theme"`    // dark | light
-	Language    string `json:"language"` // zh | en
+	Theme       string `json:"theme"`       // dark | light
+	Language    string `json:"language"`    // zh | en
 	GlobalProxy string `json:"globalProxy"` // 全局 HTTP 代理，提供商勾选「使用代理」时生效
 	Running     bool   `json:"running"`
 }
