@@ -142,7 +142,7 @@ func (a *Adapter) ForwardRaw(ctx context.Context, protocol provider.Protocol, bo
 	case provider.ProtocolAnthropic:
 		operation = conversation.OperationMessages
 	default:
-		return nil, fmt.Errorf("grok 直通不支持协议 %q", protocol)
+		return nil, fmt.Errorf("grok passthrough does not support protocol %q", protocol)
 	}
 	converted, _, err := conversation.ConvertRequestWithOptions(body, "", operation)
 	if err != nil {
@@ -225,7 +225,7 @@ func (a *Adapter) Models(ctx context.Context) ([]provider.ModelInfo, error) {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return nil, fmt.Errorf("解析 grok 模型列表: %w", err)
+		return nil, fmt.Errorf("parse grok model list: %w", err)
 	}
 	out := make([]provider.ModelInfo, 0, len(envelope.Data))
 	for _, m := range envelope.Data {
@@ -275,7 +275,7 @@ func min(a, b int) int {
 func (a *Adapter) AccessToken(ctx context.Context) (string, error) {
 	oc, ok := a.creds.(oauthCredential)
 	if !ok {
-		return "", fmt.Errorf("当前 Grok 提供商为 API Key 模式，无 OAuth 凭据")
+		return "", fmt.Errorf("current Grok provider is in API key mode, no OAuth credentials")
 	}
 	return oc.source.AccessToken(ctx)
 }
@@ -297,7 +297,7 @@ func (a *Adapter) StartDeviceAuth(ctx context.Context) (provider.DeviceAuthInfo,
 // PollDeviceAuth 轮询授权结果（成功后写回 extra）。
 func (a *Adapter) PollDeviceAuth(ctx context.Context, deviceCode string) error {
 	if a.oauthStore == nil {
-		return fmt.Errorf("当前 Grok 提供商未配置 OAuth 模式")
+		return fmt.Errorf("current Grok provider is not configured for OAuth mode")
 	}
 	client := auth.NewOAuthClient(a.http)
 	token, err := client.Poll(ctx, deviceCode)

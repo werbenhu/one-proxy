@@ -33,7 +33,7 @@ func (s *Store) Load() (Config, error) {
 			s.cfg = Default()
 			return s.cfg, nil
 		}
-		return Config{}, fmt.Errorf("读取配置: %w", err)
+		return Config{}, fmt.Errorf("read config: %w", err)
 	}
 	cfg, err := parse(data)
 	if err != nil {
@@ -46,7 +46,7 @@ func (s *Store) Load() (Config, error) {
 func parse(data []byte) (Config, error) {
 	var cfg Config
 	if err := jsonUnmarshal(data, &cfg); err != nil {
-		return Config{}, fmt.Errorf("解析配置: %w", err)
+		return Config{}, fmt.Errorf("parse config: %w", err)
 	}
 	if cfg.ListenHost == "" && cfg.ListenPort == 0 && strings.TrimSpace(cfg.LocalKey) == "" {
 		cfg = Default()
@@ -70,15 +70,15 @@ func (s *Store) saveLocked(cfg Config) error {
 	cfg = Normalize(cfg)
 	data, err := jsonMarshalIndent(cfg)
 	if err != nil {
-		return fmt.Errorf("序列化配置: %w", err)
+		return fmt.Errorf("marshal config: %w", err)
 	}
 	if dir := filepath.Dir(s.path); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("创建配置目录: %w", err)
+			return fmt.Errorf("create config dir: %w", err)
 		}
 	}
 	if err := os.WriteFile(s.path, data, 0o600); err != nil {
-		return fmt.Errorf("写入配置: %w", err)
+		return fmt.Errorf("write config: %w", err)
 	}
 	s.cfg = cfg
 	return nil
@@ -96,11 +96,11 @@ func (s *Store) Update(fn func(*Config)) error {
 	defer s.mu.Unlock()
 	data, err := json.Marshal(s.cfg)
 	if err != nil {
-		return fmt.Errorf("复制配置: %w", err)
+		return fmt.Errorf("copy config: %w", err)
 	}
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return fmt.Errorf("复制配置: %w", err)
+		return fmt.Errorf("copy config: %w", err)
 	}
 	fn(&cfg)
 	return s.saveLocked(cfg)
@@ -110,7 +110,7 @@ func (s *Store) Update(fn func(*Config)) error {
 func (s *Store) BackupInvalidAndReset() (string, error) {
 	backup := fmt.Sprintf("%s.invalid.%s", s.path, time.Now().Format("20060102-150405"))
 	if err := os.Rename(s.path, backup); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("备份损坏配置: %w", err)
+		return "", fmt.Errorf("backup corrupt config: %w", err)
 	}
 	cfg := Default()
 	if err := s.Save(cfg); err != nil {
@@ -123,7 +123,7 @@ func (s *Store) BackupInvalidAndReset() (string, error) {
 func DefaultPath(filename string) (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("获取用户配置目录: %w", err)
+		return "", fmt.Errorf("get user config dir: %w", err)
 	}
 	return filepath.Join(dir, "OneProxy", filename), nil
 }

@@ -125,14 +125,14 @@ func (c *Client) Responses(ctx context.Context, body []byte, stream bool) (*http
 
 func (c *Client) do(ctx context.Context, method, path string, body []byte, stream bool, model string) (*http.Response, error) {
 	if c.credentials == nil {
-		return nil, fmt.Errorf("缺少上游凭据源")
+		return nil, fmt.Errorf("missing upstream credential source")
 	}
 	authorization, err := c.credentials.Authorization(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(authorization.Token) == "" {
-		return nil, fmt.Errorf("上游凭据为空")
+		return nil, fmt.Errorf("upstream credentials are empty")
 	}
 	baseURL := c.apiBaseURL
 	if authorization.Mode == ModeOAuth {

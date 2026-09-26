@@ -3,6 +3,7 @@ package openaicompat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -135,5 +136,39 @@ func TestModels(t *testing.T) {
 	}
 	if len(models) != 1 || models[0].ID != "deepseek-chat" {
 		t.Fatalf("models: %+v", models)
+	}
+}
+
+// 智谱风格错误：HTTP 200 但 body 是 {"code":1001,"msg":"...","success":false}，
+// 必须转成上游错误而不是当作空模型列表。
+func TestModelsBigmodelErrorEnvelope(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":1001,"msg":"Header中未收到Authorization参数，无法进行身份验证。","success":false}`))
+	}))
+	defer up.Close()
+	a := New(up.URL, "", "")
+	_, err := a.Models(context.Background())
+	if err == nil {
+		t.Fatal("应返回错误")
+	}
+	if !strings.Contains(err.Error(), "Header中未收到Authorization参数") {
+		t.Fatalf("错误应包含上游 msg: %v", err)
+	}
+	var ue *provider.UpstreamError
+	if !errors.As(err, &ue) || a.NormalizeError(err) != provider.ErrKindAuth {
+		t.Fatalf("1001 应映射为鉴权错误: %v", err)
+	}
+}
+
+// 智谱鉴权失败：code=401 映射为 ErrKindAuth。
+func TestModelsBigmodelUnauthorized(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":401,"msg":"令牌已过期或验证不正确","success":false}`))
+	}))
+	defer up.Close()
+	a := New(up.URL, "sk-bad", "")
+	_, err := a.Models(context.Background())
+	if a.NormalizeError(err) != provider.ErrKindAuth {
+		t.Fatalf("401 映射: %v", err)
 	}
 }

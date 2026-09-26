@@ -38,7 +38,7 @@ type Store struct {
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
-		return nil, fmt.Errorf("打开用量数据库: %w", err)
+		return nil, fmt.Errorf("open usage database: %w", err)
 	}
 	db.SetMaxOpenConns(1) // modernc sqlite 单写连接避免锁竞争
 	s := &Store{db: db}
@@ -76,23 +76,23 @@ func (s *Store) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_request_log_created ON request_log(created_at);
 	CREATE INDEX IF NOT EXISTS idx_request_log_channel ON request_log(channel_id, created_at);`)
 	if err != nil {
-		return fmt.Errorf("初始化用量表: %w", err)
+		return fmt.Errorf("initialize usage tables: %w", err)
 	}
 	var hasProviderID int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('request_log') WHERE name = 'provider_id'`).Scan(&hasProviderID); err != nil {
-		return fmt.Errorf("检查用量表版本: %w", err)
+		return fmt.Errorf("check usage schema version: %w", err)
 	}
 	if hasProviderID == 0 {
 		if _, err := s.db.Exec(`ALTER TABLE request_log ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''`); err != nil {
-			return fmt.Errorf("升级用量表: %w", err)
+			return fmt.Errorf("upgrade usage schema: %w", err)
 		}
 		// 旧版每个渠道即一个上游账户；迁移后账户沿用原渠道 ID。
 		if _, err := s.db.Exec(`UPDATE request_log SET provider_id = channel_id WHERE provider_id = ''`); err != nil {
-			return fmt.Errorf("迁移历史用量: %w", err)
+			return fmt.Errorf("migrate historical usage: %w", err)
 		}
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_request_log_provider ON request_log(provider_id, created_at)`); err != nil {
-		return fmt.Errorf("创建提供商用量索引: %w", err)
+		return fmt.Errorf("create provider usage index: %w", err)
 	}
 	return nil
 }
@@ -106,7 +106,7 @@ func (s *Store) Insert(r Record) error {
 		r.CreatedAt.Unix(), r.ChannelID, r.ChannelName, r.ProviderID, r.ModelRequested, r.ModelUpstream, r.Protocol,
 		r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheWriteTokens, r.Status, r.LatencyMs, r.Error)
 	if err != nil {
-		return fmt.Errorf("写入用量记录: %w", err)
+		return fmt.Errorf("write usage record: %w", err)
 	}
 	return nil
 }
@@ -181,7 +181,7 @@ func (s *Store) Summary(since time.Time) ([]AggRow, error) {
 		FROM request_log `+where+` GROUP BY channel_id, model_requested, model_upstream
 		ORDER BY SUM(input_tokens)+SUM(output_tokens) DESC`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("聚合查询: %w", err)
+		return nil, fmt.Errorf("aggregate query: %w", err)
 	}
 	defer rows.Close()
 	var out []AggRow
@@ -210,7 +210,7 @@ func (s *Store) Series(bucket string, since time.Time) ([]SeriesRow, error) {
 		"hour": "%Y-%m-%dT%H:00", "day": "%Y-%m-%d", "week": "%Y-W%W", "month": "%Y-%m",
 	}[bucket]
 	if fmtStr == "" {
-		return nil, fmt.Errorf("无效时间桶 %q", bucket)
+		return nil, fmt.Errorf("invalid time bucket %q", bucket)
 	}
 	where := ""
 	args := []any{}
@@ -222,7 +222,7 @@ func (s *Store) Series(bucket string, since time.Time) ([]SeriesRow, error) {
 		SUM(input_tokens), SUM(output_tokens), COUNT(*)
 		FROM request_log `+where+` GROUP BY 1 ORDER BY 1`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("序列查询: %w", err)
+		return nil, fmt.Errorf("series query: %w", err)
 	}
 	defer rows.Close()
 	var out []SeriesRow
@@ -319,7 +319,7 @@ func (s *Store) ProviderDaily(providerID string, since time.Time) ([]DayTokens, 
 	rows, err := s.db.Query(`SELECT strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime'), SUM(`+totalTokens+`)
 		FROM request_log WHERE provider_id = ? AND created_at >= ? GROUP BY 1 ORDER BY 1`, providerID, since.Unix())
 	if err != nil {
-		return nil, fmt.Errorf("逐日用量查询: %w", err)
+		return nil, fmt.Errorf("daily usage query: %w", err)
 	}
 	defer rows.Close()
 	out := []DayTokens{}
@@ -338,7 +338,7 @@ func (s *Store) ProviderDailyByModel(providerID string, since time.Time) ([]Mode
 	rows, err := s.db.Query(`SELECT strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime'), model_upstream, SUM(`+totalTokens+`)
 		FROM request_log WHERE provider_id = ? AND created_at >= ? GROUP BY 1, 2 ORDER BY 1`, providerID, since.Unix())
 	if err != nil {
-		return nil, fmt.Errorf("逐日模型用量查询: %w", err)
+		return nil, fmt.Errorf("daily model usage query: %w", err)
 	}
 	defer rows.Close()
 	out := []ModelDayTokens{}
@@ -357,7 +357,7 @@ func (s *Store) DailyByModel(since time.Time) ([]ModelDayTokens, error) {
 	rows, err := s.db.Query(`SELECT strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime'), model_upstream, SUM(`+totalTokens+`)
 		FROM request_log WHERE created_at >= ? GROUP BY 1, 2 ORDER BY 1`, since.Unix())
 	if err != nil {
-		return nil, fmt.Errorf("逐日模型用量查询: %w", err)
+		return nil, fmt.Errorf("daily model usage query: %w", err)
 	}
 	defer rows.Close()
 	out := []ModelDayTokens{}
@@ -376,7 +376,7 @@ func (s *Store) HourlyByModel(since time.Time) ([]ModelHourTokens, error) {
 	rows, err := s.db.Query(`SELECT strftime('%Y-%m-%dT%H', created_at, 'unixepoch', 'localtime'), model_upstream, SUM(`+totalTokens+`)
 		FROM request_log WHERE created_at >= ? GROUP BY 1, 2 ORDER BY 1`, since.Unix())
 	if err != nil {
-		return nil, fmt.Errorf("逐小时模型用量查询: %w", err)
+		return nil, fmt.Errorf("hourly model usage query: %w", err)
 	}
 	defer rows.Close()
 	out := []ModelHourTokens{}
@@ -412,7 +412,7 @@ func (s *Store) ProviderModelStats(providerID string, since time.Time) ([]ModelS
 		SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens), SUM(`+totalTokens+`)
 		FROM request_log WHERE `+where+` GROUP BY model_upstream ORDER BY SUM(`+totalTokens+`) DESC`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("按模型用量汇总: %w", err)
+		return nil, fmt.Errorf("per-model usage summary: %w", err)
 	}
 	defer rows.Close()
 	out := []ModelStat{}

@@ -18,11 +18,11 @@ import (
 func ChatToAnthropic(body []byte) (*anthropic.Request, error) {
 	chat, err := openaichat.ParseChatRequest(body)
 	if err != nil {
-		return nil, fmt.Errorf("解析 chat 请求: %w", err)
+		return nil, fmt.Errorf("parse chat request: %w", err)
 	}
 	var msgs []json.RawMessage
 	if err := json.Unmarshal(chat.Messages, &msgs); err != nil {
-		return nil, fmt.Errorf("解析 messages: %w", err)
+		return nil, fmt.Errorf("parse messages: %w", err)
 	}
 	sysParts := []string{}
 	var outMsgs []map[string]json.RawMessage
@@ -35,7 +35,7 @@ func ChatToAnthropic(body []byte) (*anthropic.Request, error) {
 			Name       string          `json:"name"`
 		}
 		if err := json.Unmarshal(raw, &m); err != nil {
-			return nil, fmt.Errorf("解析 message: %w", err)
+			return nil, fmt.Errorf("parse message: %w", err)
 		}
 		switch m.Role {
 		case "system", "developer":
@@ -72,7 +72,7 @@ func ChatToAnthropic(body []byte) (*anthropic.Request, error) {
 					} `json:"function"`
 				}
 				if err := json.Unmarshal(m.ToolCalls, &calls); err != nil {
-					return nil, fmt.Errorf("解析 tool_calls: %w", err)
+					return nil, fmt.Errorf("parse tool_calls: %w", err)
 				}
 				for _, c := range calls {
 					var input any = map[string]any{}
@@ -151,7 +151,7 @@ func chatContentToBlocks(raw json.RawMessage) ([]map[string]any, error) {
 	}
 	var parts []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err != nil {
-		return nil, fmt.Errorf("解析 content parts: %w", err)
+		return nil, fmt.Errorf("parse content parts: %w", err)
 	}
 	blocks := []map[string]any{}
 	for _, p := range parts {
@@ -202,7 +202,7 @@ func chatToolsToAnthropic(raw json.RawMessage) (json.RawMessage, error) {
 		} `json:"function"`
 	}
 	if err := json.Unmarshal(raw, &tools); err != nil {
-		return nil, fmt.Errorf("解析 tools: %w", err)
+		return nil, fmt.Errorf("parse tools: %w", err)
 	}
 	out := []map[string]any{}
 	for _, t := range tools {
@@ -384,7 +384,7 @@ func AnthropicToChatRequest(req *anthropic.Request) ([]byte, error) {
 	if req.Messages != nil {
 		var rest []json.RawMessage
 		if err := json.Unmarshal(req.Messages, &rest); err != nil {
-			return nil, fmt.Errorf("解析 canonical messages: %w", err)
+			return nil, fmt.Errorf("parse canonical messages: %w", err)
 		}
 		msgs = append(msgs, rest...)
 	}
@@ -536,7 +536,7 @@ func anthropicMessagesToChat(msgs []json.RawMessage) ([]map[string]any, error) {
 func anthropicToolsToChat(raw json.RawMessage) (json.RawMessage, error) {
 	var tools []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &tools); err != nil {
-		return nil, fmt.Errorf("解析 anthropic tools: %w", err)
+		return nil, fmt.Errorf("parse anthropic tools: %w", err)
 	}
 	out := []map[string]any{}
 	for _, t := range tools {

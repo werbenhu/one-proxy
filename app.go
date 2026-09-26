@@ -45,14 +45,14 @@ type App struct {
 func NewApp() (*App, error) {
 	directory, err := os.UserConfigDir()
 	if err != nil {
-		return nil, fmt.Errorf("获取用户配置目录: %w", err)
+		return nil, fmt.Errorf("get user config dir: %w", err)
 	}
 	store := config.NewStore(filepath.Join(directory, "OneProxy", "config.json"))
 	configWarning := ""
 	if _, err := store.Load(); err != nil {
 		backup, recoverErr := store.BackupInvalidAndReset()
 		if recoverErr != nil {
-			return nil, fmt.Errorf("%w；恢复默认配置也失败: %w", err, recoverErr)
+			return nil, fmt.Errorf("%w; restoring default config also failed: %w", err, recoverErr)
 		}
 		configWarning = fmt.Sprintf("原配置无效，已备份到 %s 并恢复默认设置", backup)
 	}

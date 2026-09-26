@@ -257,7 +257,7 @@ func chatResponseToAnthropic(data []byte) (*anthropic.Response, error) {
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("解析 chat 响应: %w", err)
+		return nil, fmt.Errorf("parse chat response: %w", err)
 	}
 	out := &anthropic.Response{
 		ID: resp.ID, Type: "message", Role: "assistant", Model: resp.Model,
@@ -307,7 +307,15 @@ func (a *Adapter) Models(ctx context.Context) ([]provider.ModelInfo, error) {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return nil, fmt.Errorf("解析模型列表: %w", err)
+		return nil, fmt.Errorf("parse model list: %w", err)
+	}
+	if envelope.Data == nil {
+		// 智谱 bigmodel 等上游把鉴权/业务错误包在 HTTP 200 里返回，
+		// body 形如 {"code":1001,"msg":"...","success":false}，没有 data 字段。
+		if msg := bigmodelErrorMessage(data); msg != "" {
+			return nil, bigmodelUpstreamError(data, msg)
+		}
+		return nil, fmt.Errorf("upstream response missing data field: %s", snipBody(data, 200))
 	}
 	out := make([]provider.ModelInfo, 0, len(envelope.Data))
 	for _, m := range envelope.Data {
@@ -343,4 +351,59 @@ func upstreamError(status int, statusText string, body []byte) error {
 func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+// snipBody 截断上游响应体用于错误信息。
+func snipBody(body []byte, limit int) string {
+	snip := strings.TrimSpace(string(body))
+	if len(snip) > limit {
+		snip = snip[:limit] + "…"
+	}
+	return snip
+}
+
+// bigmodelErrorMessage 识别智谱 bigmodel 包在 HTTP 200 里的错误信封
+// （{"code":xxx,"msg":"...","success":false}），返回其中的 msg；非该格式返回空串。
+func bigmodelErrorMessage(body []byte) string {
+	var env struct {
+		Code    int    `json:"code"`
+		Msg     string `json:"msg"`
+		Success *bool  `json:"success"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return ""
+	}
+	if env.Code == 0 || env.Msg == "" {
+		return ""
+	}
+	// success 字段存在且为 true 时不是错误
+	if env.Success != nil && *env.Success {
+		return ""
+	}
+	return env.Msg
+}
+
+// bigmodelUpstreamError 把智谱错误信封转成 UpstreamError，code 尽量映射到错误类别。
+func bigmodelUpstreamError(body []byte, msg string) error {
+	var env struct {
+		Code int `json:"code"`
+	}
+	_ = json.Unmarshal(body, &env)
+	ue := &provider.UpstreamError{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Body:       snipBody(body, 512),
+	}
+	switch {
+	case env.Code == 401 || env.Code == 1001:
+		// 401 未授权；1001 缺少/无效 Authorization
+		ue.Kind = provider.ErrKindAuth
+	case env.Code == 429:
+		ue.Kind = provider.ErrKindQuota
+	default:
+		ue.Kind = provider.ErrKindUpstream
+	}
+	// msg 已经包含在 Body 里，无需额外包装
+	_ = msg
+	return ue
 }

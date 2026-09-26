@@ -32,7 +32,7 @@ func ResponsesToAnthropic(body []byte) (*anthropic.Request, error) {
 		ToolChoice      json.RawMessage `json:"tool_choice"`
 	}
 	if err := json.Unmarshal(body, &rr); err != nil {
-		return nil, fmt.Errorf("解析 responses 请求: %w", err)
+		return nil, fmt.Errorf("parse responses request: %w", err)
 	}
 	req := &anthropic.Request{
 		Model: rr.Model, Stream: rr.Stream,
@@ -96,7 +96,7 @@ func responsesInputToMessages(raw json.RawMessage) ([]map[string]json.RawMessage
 	}
 	var items []json.RawMessage
 	if err := json.Unmarshal(raw, &items); err != nil {
-		return nil, nil, fmt.Errorf("解析 input: %w", err)
+		return nil, nil, fmt.Errorf("parse input: %w", err)
 	}
 	var msgs []map[string]json.RawMessage
 	var sysParts []string
@@ -111,7 +111,7 @@ func responsesInputToMessages(raw json.RawMessage) ([]map[string]json.RawMessage
 			Output    json.RawMessage `json:"output"`
 		}
 		if err := json.Unmarshal(item, &it); err != nil {
-			return nil, nil, fmt.Errorf("解析 input item: %w", err)
+			return nil, nil, fmt.Errorf("parse input item: %w", err)
 		}
 		switch it.Type {
 		case "function_call":
@@ -168,7 +168,7 @@ func responsesUserBlocks(raw json.RawMessage) ([]map[string]any, error) {
 	}
 	var parts []map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err != nil {
-		return nil, fmt.Errorf("解析 message content: %w", err)
+		return nil, fmt.Errorf("parse message content: %w", err)
 	}
 	blocks := []map[string]any{}
 	for _, p := range parts {
@@ -242,7 +242,7 @@ func responsesToolsToAnthropic(raw json.RawMessage) (json.RawMessage, error) {
 		Parameters  json.RawMessage `json:"parameters"`
 	}
 	if err := json.Unmarshal(raw, &tools); err != nil {
-		return nil, fmt.Errorf("解析 tools: %w", err)
+		return nil, fmt.Errorf("parse tools: %w", err)
 	}
 	out := []map[string]any{}
 	for _, t := range tools {

@@ -28,7 +28,7 @@ const (
 )
 
 // ErrModelNotDeclared 没有任何渠道声明请求的模型。
-var ErrModelNotDeclared = errors.New("没有渠道声明该模型")
+var ErrModelNotDeclared = errors.New("no channel declares this model")
 
 // ErrNoCandidates 全部候选不可用（携带各渠道不可用原因）。
 type ErrNoCandidates struct {
@@ -114,28 +114,28 @@ func (r *Router) ResolveDirect(id, model string) ([]Target, error) {
 	cfg := r.store.Get()
 	if ch, found := cfg.Channel(id); found {
 		if !ch.Enabled {
-			return nil, fmt.Errorf("渠道 %s 未启用", id)
+			return nil, fmt.Errorf("channel %s is disabled", id)
 		}
 		candidates, err := r.resolveChannel(cfg, ch, model)
 		if err != nil {
-			return nil, fmt.Errorf("渠道 %s 没有可用提供商", id)
+			return nil, fmt.Errorf("channel %s has no available providers", id)
 		}
 		return candidates, nil
 	}
 	if p, found := cfg.Provider(id); found && p.Enabled {
 		adapter, registered := r.registry.Get(p.ID)
 		if !registered {
-			return nil, fmt.Errorf("提供商 %s 适配器未注册", p.ID)
+			return nil, fmt.Errorf("provider %s adapter not registered", p.ID)
 		}
 		return []Target{{Channel: config.Channel{ID: id, Name: p.Name, Model: model, Enabled: true}, Provider: p, Adapter: adapter, UpstreamModel: model}}, nil
 	}
-	return nil, fmt.Errorf("直连目标 %s 不存在或未启用", id)
+	return nil, fmt.Errorf("direct target %s does not exist or is disabled", id)
 }
 
 func (r *Router) resolveChannel(cfg config.Config, ch config.Channel, model string) ([]Target, error) {
 	candidates := r.targetsForChannel(cfg, ch)
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("%w: %s（渠道没有已启用的提供商）", ErrModelNotDeclared, model)
+		return nil, fmt.Errorf("%w: %s (channel has no enabled providers)", ErrModelNotDeclared, model)
 	}
 	// 上游模型留空 = 透传：把客户端请求的模型名原样发给上游
 	for i := range candidates {

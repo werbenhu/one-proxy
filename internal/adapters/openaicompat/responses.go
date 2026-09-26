@@ -17,7 +17,7 @@ func (a *Adapter) SupportedProtocols() []provider.Protocol {
 
 func (a *Adapter) ForwardRaw(ctx context.Context, protocol provider.Protocol, body []byte, _ http.Header, stream bool) (*provider.RawResult, error) {
 	if protocol != provider.ProtocolResponses {
-		return nil, fmt.Errorf("OpenAI 兼容提供商不支持直通协议 %q", protocol)
+		return nil, fmt.Errorf("OpenAI-compatible provider does not support passthrough protocol %q", protocol)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/responses", bytes.NewReader(body))
 	if err != nil {

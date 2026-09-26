@@ -61,7 +61,7 @@ func (a *Adapter) buildRequest(ctx context.Context, req *anthropic.Request, body
 func (a *Adapter) Invoke(ctx context.Context, req *anthropic.Request) (*anthropic.Response, error) {
 	body, err := anthropic.WriteRequestBytes(req)
 	if err != nil {
-		return nil, fmt.Errorf("序列化请求: %w", err)
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 	httpReq, err := a.buildRequest(ctx, req, body, false)
 	if err != nil {
@@ -88,7 +88,7 @@ func (a *Adapter) Invoke(ctx context.Context, req *anthropic.Request) (*anthropi
 func (a *Adapter) Stream(ctx context.Context, req *anthropic.Request) (<-chan anthropic.Event, error) {
 	body, err := anthropic.WriteRequestBytes(req)
 	if err != nil {
-		return nil, fmt.Errorf("序列化请求: %w", err)
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 	httpReq, err := a.buildRequest(ctx, req, body, true)
 	if err != nil {
@@ -149,7 +149,7 @@ func (a *Adapter) Models(ctx context.Context) ([]provider.ModelInfo, error) {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return nil, fmt.Errorf("解析模型列表: %w", err)
+		return nil, fmt.Errorf("parse model list: %w", err)
 	}
 	out := make([]provider.ModelInfo, 0, len(envelope.Data))
 	for _, m := range envelope.Data {

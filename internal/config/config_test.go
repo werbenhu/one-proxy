@@ -43,17 +43,17 @@ func TestValidateErrors(t *testing.T) {
 		mut  func(*Config)
 		want string
 	}{
-		{"空 host", func(c *Config) { c.ListenHost = "" }, "监听地址"},
-		{"非法端口", func(c *Config) { c.ListenPort = 0 }, "端口"},
-		{"空密钥", func(c *Config) { c.LocalKey = "" }, "密钥"},
-		{"渠道ID含斜杠", func(c *Config) { c.Channels[0].ID = "a/b" }, "不能包含"},
+		{"空 host", func(c *Config) { c.ListenHost = "" }, "listen address"},
+		{"非法端口", func(c *Config) { c.ListenPort = 0 }, "port"},
+		{"空密钥", func(c *Config) { c.LocalKey = "" }, "local proxy key"},
+		{"渠道ID含斜杠", func(c *Config) { c.Channels[0].ID = "a/b" }, "contain /"},
 		{"渠道ID重复", func(c *Config) {
 			c.Channels = append(c.Channels, c.Channels[0])
-		}, "重复"},
-		{"类型无效", func(c *Config) { c.Channels[0].Type = "xxx" }, "类型"},
+		}, "duplicate"},
+		{"类型无效", func(c *Config) { c.Channels[0].Type = "xxx" }, "invalid type"},
 		{"缺 BaseURL", func(c *Config) { c.Channels[0].BaseURL = "" }, "BaseURL"},
-		{"启用缺 Key", func(c *Config) { c.Channels[0].APIKey = "" }, "API Key"},
-		{"启用无模型", func(c *Config) { c.Channels[0].Models = nil }, "模型"},
+		{"启用缺 Key", func(c *Config) { c.Channels[0].APIKey = "" }, "API key"},
+		{"启用无模型", func(c *Config) { c.Channels[0].Models = nil }, "no public models"},
 		{"禁用可缺 Key", func(c *Config) {
 			c.Channels[0].APIKey = ""
 			c.Channels[0].Enabled = false
@@ -116,7 +116,7 @@ func TestValidateModernProviderAndChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.Channels[0].Targets[0].ProviderID = "missing"
-	if err := Validate(cfg); err == nil || !strings.Contains(err.Error(), "不存在") {
+	if err := Validate(cfg); err == nil || !strings.Contains(err.Error(), "non-existent provider") {
 		t.Fatalf("应拒绝悬空绑定: %v", err)
 	}
 }

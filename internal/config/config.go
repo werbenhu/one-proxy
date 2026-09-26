@@ -236,71 +236,71 @@ func Validate(c Config) error {
 	c = Normalize(c)
 	host := strings.TrimSpace(c.ListenHost)
 	if host == "" {
-		return errors.New("监听地址不能为空")
+		return errors.New("listen address must not be empty")
 	}
 	if ip := net.ParseIP(strings.Trim(host, "[]")); ip == nil && !strings.EqualFold(host, "localhost") {
-		return fmt.Errorf("监听地址 %q 无效", c.ListenHost)
+		return fmt.Errorf("invalid listen address %q", c.ListenHost)
 	}
 	if c.ListenPort < 1 || c.ListenPort > 65535 {
-		return errors.New("监听端口必须在 1 到 65535 之间")
+		return errors.New("listen port must be between 1 and 65535")
 	}
 	if strings.TrimSpace(c.LocalKey) == "" {
-		return errors.New("本地代理密钥不能为空")
+		return errors.New("local proxy key must not be empty")
 	}
 
 	providerIDs := map[string]bool{}
 	for i, p := range c.Providers {
 		if strings.TrimSpace(p.ID) == "" {
-			return fmt.Errorf("提供商 %d ID 不能为空", i+1)
+			return fmt.Errorf("provider %d ID must not be empty", i+1)
 		}
 		if providerIDs[p.ID] {
-			return fmt.Errorf("提供商 ID %q 重复", p.ID)
+			return fmt.Errorf("duplicate provider ID %q", p.ID)
 		}
 		providerIDs[p.ID] = true
 		if !ValidType(p.Type) {
-			return fmt.Errorf("提供商 %s 类型无效: %q", p.ID, p.Type)
+			return fmt.Errorf("provider %s has invalid type: %q", p.ID, p.Type)
 		}
 		if p.Type != TypeGrok && strings.TrimSpace(p.BaseURL) == "" {
-			return fmt.Errorf("提供商 %s 缺少 BaseURL", p.ID)
+			return fmt.Errorf("provider %s missing BaseURL", p.ID)
 		}
 		if p.Enabled && p.Type != TypeGrok && strings.TrimSpace(p.APIKey) == "" {
-			return fmt.Errorf("提供商 %s 已启用但缺少 API Key", p.ID)
+			return fmt.Errorf("provider %s is enabled but missing API key", p.ID)
 		}
 	}
 	channelIDs := map[string]bool{}
 	for i, ch := range c.Channels {
 		if strings.TrimSpace(ch.ID) == "" || strings.Contains(ch.ID, "/") {
-			return fmt.Errorf("渠道 %d ID 不能为空且不能包含 /", i+1)
+			return fmt.Errorf("channel %d ID must not be empty or contain /", i+1)
 		}
 		if channelIDs[ch.ID] {
-			return fmt.Errorf("渠道 ID %q 重复", ch.ID)
+			return fmt.Errorf("duplicate channel ID %q", ch.ID)
 		}
 		channelIDs[ch.ID] = true
 		if ch.Strategy != StrategyPriority && ch.Strategy != StrategyRoundRobin {
-			return fmt.Errorf("渠道 %s 调度策略无效", ch.ID)
+			return fmt.Errorf("channel %s has invalid dispatch policy", ch.ID)
 		}
 		if ch.Enabled && len(ch.Targets) == 0 {
-			return fmt.Errorf("渠道 %s 没有内部目标", ch.ID)
+			return fmt.Errorf("channel %s has no internal targets", ch.ID)
 		}
 		enabledTargets := 0
 		targetIDs := map[string]bool{}
 		for _, target := range ch.Targets {
 			if !providerIDs[target.ProviderID] {
-				return fmt.Errorf("渠道 %s 引用了不存在的提供商 %s", ch.ID, target.ProviderID)
+				return fmt.Errorf("channel %s references non-existent provider %s", ch.ID, target.ProviderID)
 			}
 			if targetIDs[target.ProviderID] {
-				return fmt.Errorf("渠道 %s 重复绑定提供商 %s", ch.ID, target.ProviderID)
+				return fmt.Errorf("channel %s binds provider %s more than once", ch.ID, target.ProviderID)
 			}
 			targetIDs[target.ProviderID] = true
 			if target.Weight < 0 || target.Weight > 100 {
-				return fmt.Errorf("渠道 %s 的权重必须在 0 到 100 之间", ch.ID)
+				return fmt.Errorf("channel %s weight must be between 0 and 100", ch.ID)
 			}
 			if target.Enabled {
 				enabledTargets++
 			}
 		}
 		if ch.Enabled && enabledTargets == 0 {
-			return fmt.Errorf("渠道 %s 没有已启用的内部目标", ch.ID)
+			return fmt.Errorf("channel %s has no enabled internal targets", ch.ID)
 		}
 	}
 	return nil
@@ -313,23 +313,23 @@ func validateLegacy(channels []Channel) error {
 			continue
 		}
 		if strings.TrimSpace(ch.ID) == "" || strings.Contains(ch.ID, "/") {
-			return fmt.Errorf("渠道 %d ID 不能为空且不能包含 /", i+1)
+			return fmt.Errorf("channel %d ID must not be empty or contain /", i+1)
 		}
 		if seen[ch.ID] {
-			return fmt.Errorf("渠道 ID %q 重复", ch.ID)
+			return fmt.Errorf("duplicate channel ID %q", ch.ID)
 		}
 		seen[ch.ID] = true
 		if !ValidType(ch.Type) {
-			return fmt.Errorf("渠道 %s 类型无效: %q", ch.ID, ch.Type)
+			return fmt.Errorf("channel %s has invalid type: %q", ch.ID, ch.Type)
 		}
 		if ch.Type != TypeGrok && strings.TrimSpace(ch.BaseURL) == "" {
-			return fmt.Errorf("渠道 %s 缺少 BaseURL", ch.ID)
+			return fmt.Errorf("channel %s missing BaseURL", ch.ID)
 		}
 		if ch.Enabled && ch.Type != TypeGrok && strings.TrimSpace(ch.APIKey) == "" {
-			return fmt.Errorf("渠道 %s 已启用但缺少 API Key", ch.ID)
+			return fmt.Errorf("channel %s is enabled but missing API key", ch.ID)
 		}
 		if ch.Enabled && len(ch.Models) == 0 {
-			return fmt.Errorf("渠道 %s 未声明任何对外模型", ch.ID)
+			return fmt.Errorf("channel %s declares no public models", ch.ID)
 		}
 	}
 	return nil

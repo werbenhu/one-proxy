@@ -194,7 +194,7 @@ type ProviderKeysView struct {
 func (s *Service) ProviderKeys(id string) (ProviderKeysView, error) {
 	p, ok := s.store.Get().Provider(id)
 	if !ok {
-		return ProviderKeysView{}, fmt.Errorf("提供商 %s 不存在", id)
+		return ProviderKeysView{}, fmt.Errorf("provider %s does not exist", id)
 	}
 	return ProviderKeysView{APIKey: p.APIKey, BalanceKey: p.BalanceKey}, nil
 }
@@ -209,7 +209,7 @@ func (s *Service) ExportProviders() ([]byte, error) {
 func (s *Service) ImportProviders(data []byte) (added, skipped int, err error) {
 	var incoming []config.ProviderAccount
 	if err := json.Unmarshal(data, &incoming); err != nil {
-		return 0, 0, fmt.Errorf("导入文件不是有效的提供商 JSON: %w", err)
+		return 0, 0, fmt.Errorf("import file is not valid provider JSON: %w", err)
 	}
 	err = s.store.Update(func(c *config.Config) {
 		existing := map[string]bool{}
@@ -294,7 +294,7 @@ func (s *Service) DeleteProvider(id string) error {
 	for _, ch := range s.store.Get().Channels {
 		for _, target := range ch.Targets {
 			if target.ProviderID == id {
-				return fmt.Errorf("提供商仍被渠道 %s 使用，请先移除绑定", ch.Name)
+				return fmt.Errorf("provider is still used by channel %s; remove the binding first", ch.Name)
 			}
 		}
 	}
@@ -337,7 +337,7 @@ func (s *Service) SaveChannel(ch config.Channel, originalID string) error {
 	if originalID != "" && originalID != ch.ID {
 		for _, old := range s.store.Get().Channels {
 			if old.ID == ch.ID {
-				return fmt.Errorf("渠道 ID %q 已存在", ch.ID)
+				return fmt.Errorf("channel ID %q already exists", ch.ID)
 			}
 		}
 	}
@@ -456,7 +456,7 @@ func usageSince(rangeKey string) (time.Time, error) {
 		since = time.Now().AddDate(0, 0, -30)
 	case "all", "":
 	default:
-		return since, fmt.Errorf("无效时间范围 %q", rangeKey)
+		return since, fmt.Errorf("invalid time range %q", rangeKey)
 	}
 	return since, nil
 }
@@ -500,7 +500,7 @@ func (s *Service) ProviderUsage(id string) ProviderUsageView {
 func (s *Service) ProviderModels(id string) ([]provider.ModelInfo, error) {
 	adapter, ok := s.registry.Get(id)
 	if !ok {
-		return nil, fmt.Errorf("提供商 %s 未注册（可能未启用）", id)
+		return nil, fmt.Errorf("provider %s is not registered (may be disabled)", id)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -516,11 +516,11 @@ func (s *Service) TestChannel(id string) error { return s.TestProvider(id) }
 func (s *Service) StartGrokDeviceAuth(id string) (provider.DeviceAuthInfo, error) {
 	adapter, ok := s.registry.Get(id)
 	if !ok {
-		return provider.DeviceAuthInfo{}, fmt.Errorf("提供商 %s 未注册", id)
+		return provider.DeviceAuthInfo{}, fmt.Errorf("provider %s is not registered", id)
 	}
 	oc, ok := adapter.(provider.OAuthCapable)
 	if !ok {
-		return provider.DeviceAuthInfo{}, fmt.Errorf("提供商 %s 不支持 OAuth", id)
+		return provider.DeviceAuthInfo{}, fmt.Errorf("provider %s does not support OAuth", id)
 	}
 	return oc.StartDeviceAuth(context.Background())
 }
@@ -529,11 +529,11 @@ func (s *Service) StartGrokDeviceAuth(id string) (provider.DeviceAuthInfo, error
 func (s *Service) CompleteGrokDeviceAuth(id, deviceCode string) error {
 	adapter, ok := s.registry.Get(id)
 	if !ok {
-		return fmt.Errorf("提供商 %s 未注册", id)
+		return fmt.Errorf("provider %s is not registered", id)
 	}
 	oc, ok := adapter.(provider.OAuthCapable)
 	if !ok {
-		return fmt.Errorf("提供商 %s 不支持 OAuth", id)
+		return fmt.Errorf("provider %s does not support OAuth", id)
 	}
 	return oc.PollDeviceAuth(context.Background(), deviceCode)
 }

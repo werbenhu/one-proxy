@@ -44,7 +44,7 @@ type BalanceView struct {
 func (s *Service) ProviderBalance(id string) (BalanceView, error) {
 	p, ok := s.store.Get().Provider(id)
 	if !ok {
-		return BalanceView{}, fmt.Errorf("提供商 %s 不存在", id)
+		return BalanceView{}, fmt.Errorf("provider %s does not exist", id)
 	}
 	if p.BalanceKind == "" && p.BalanceURL == "" {
 		return BalanceView{Supported: false, Summary: "该提供商没有可用的余额接口"}, nil
@@ -53,7 +53,7 @@ func (s *Service) ProviderBalance(id string) (BalanceView, error) {
 		return s.grokBalance(p)
 	}
 	if p.BalanceKind == "grok" {
-		return BalanceView{}, fmt.Errorf("Grok 订阅额度仅适用于 Grok 类型的提供商")
+		return BalanceView{}, fmt.Errorf("Grok subscription quota only applies to Grok-type providers")
 	}
 	endpoint, err := balanceEndpoint(p.BalanceKind, p.BalanceURL, p.BaseURL)
 	if err != nil {
@@ -73,12 +73,12 @@ func (s *Service) ProviderBalance(id string) (BalanceView, error) {
 	req.Header.Set("Accept", "application/json")
 	resp, err := provider.Client(p.EffectiveProxyURL(s.store.Get().GlobalProxy)).Do(req)
 	if err != nil {
-		return BalanceView{}, fmt.Errorf("查询余额: %w", err)
+		return BalanceView{}, fmt.Errorf("query balance: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return BalanceView{}, fmt.Errorf("读取余额响应: %w", err)
+		return BalanceView{}, fmt.Errorf("read balance response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		message := strings.TrimSpace(string(body))
@@ -89,9 +89,9 @@ func (s *Service) ProviderBalance(id string) (BalanceView, error) {
 			message = message[:300] + "..."
 		}
 		if message == "" {
-			return BalanceView{}, fmt.Errorf("余额接口返回 HTTP %d", resp.StatusCode)
+			return BalanceView{}, fmt.Errorf("balance endpoint returned HTTP %d", resp.StatusCode)
 		}
-		return BalanceView{}, fmt.Errorf("余额接口返回 HTTP %d: %s", resp.StatusCode, message)
+		return BalanceView{}, fmt.Errorf("balance endpoint returned HTTP %d: %s", resp.StatusCode, message)
 	}
 	view, err := parseBalance(p.BalanceKind, body)
 	if err != nil {
@@ -118,17 +118,17 @@ func (s *Service) grokBalance(p config.ProviderAccount) (BalanceView, error) {
 	}
 	adapter, ok := s.registry.Get(p.ID)
 	if !ok {
-		return BalanceView{}, fmt.Errorf("提供商 %s 未注册或未启用", p.ID)
+		return BalanceView{}, fmt.Errorf("provider %s is not registered or not enabled", p.ID)
 	}
 	source, ok := adapter.(grokTokenSource)
 	if !ok {
-		return BalanceView{}, fmt.Errorf("Grok 提供商未处于网页授权模式")
+		return BalanceView{}, fmt.Errorf("Grok provider is not in web authorization mode")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	token, err := source.AccessToken(ctx)
 	if err != nil {
-		return BalanceView{}, fmt.Errorf("获取 Grok 授权：%w", err)
+		return BalanceView{}, fmt.Errorf("get Grok authorization: %w", err)
 	}
 	base := strings.TrimRight(p.BaseURL, "/")
 	if base == "" {
@@ -142,15 +142,15 @@ func (s *Service) grokBalance(p config.ProviderAccount) (BalanceView, error) {
 	req.Header.Set("Accept", "application/json")
 	resp, err := provider.Client(p.EffectiveProxyURL(s.store.Get().GlobalProxy)).Do(req)
 	if err != nil {
-		return BalanceView{}, fmt.Errorf("查询 Grok 额度: %w", err)
+		return BalanceView{}, fmt.Errorf("query Grok quota: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return BalanceView{}, fmt.Errorf("读取 Grok 额度响应: %w", err)
+		return BalanceView{}, fmt.Errorf("read Grok quota response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return BalanceView{}, fmt.Errorf("Grok 额度接口返回 HTTP %d", resp.StatusCode)
+		return BalanceView{}, fmt.Errorf("Grok quota endpoint returned HTTP %d", resp.StatusCode)
 	}
 	var bill struct {
 		Config struct {
@@ -162,11 +162,11 @@ func (s *Service) grokBalance(p config.ProviderAccount) (BalanceView, error) {
 		} `json:"config"`
 	}
 	if err := json.Unmarshal(body, &bill); err != nil {
-		return BalanceView{}, fmt.Errorf("解析 Grok 额度响应: %w", err)
+		return BalanceView{}, fmt.Errorf("parse Grok quota response: %w", err)
 	}
 	period := bill.Config.CurrentPeriod
 	if period == nil {
-		return BalanceView{}, fmt.Errorf("Grok 额度接口返回成功，但响应格式无法识别")
+		return BalanceView{}, fmt.Errorf("Grok quota endpoint returned success but the response format is unrecognized")
 	}
 	percent := 0
 	if bill.Config.CreditUsagePercent != nil {
@@ -201,7 +201,7 @@ func grokPeriodLabel(periodType string) string {
 func balanceEndpoint(kind, custom, base string) (string, error) {
 	if strings.TrimSpace(custom) != "" {
 		if _, err := url.ParseRequestURI(custom); err != nil {
-			return "", fmt.Errorf("余额接口地址无效: %w", err)
+			return "", fmt.Errorf("invalid balance endpoint URL: %w", err)
 		}
 		return strings.TrimRight(custom, "/"), nil
 	}
@@ -221,18 +221,18 @@ func balanceEndpoint(kind, custom, base string) (string, error) {
 	case "moonshot":
 		u, err := url.Parse(base)
 		if err != nil || u.Scheme == "" || u.Host == "" {
-			return "", fmt.Errorf("无法从 Base URL 推导 Kimi 余额接口")
+			return "", fmt.Errorf("cannot derive Kimi balance endpoint from Base URL")
 		}
 		return u.Scheme + "://" + u.Host + "/v1/users/me/balance", nil
 	default:
-		return "", fmt.Errorf("未知余额类型 %q，请配置自定义余额接口", kind)
+		return "", fmt.Errorf("unknown balance kind %q; please configure a custom balance endpoint", kind)
 	}
 }
 
 func parseBalance(kind string, body []byte) (BalanceView, error) {
 	var root map[string]any
 	if err := json.Unmarshal(body, &root); err != nil {
-		return BalanceView{}, fmt.Errorf("解析余额响应: %w", err)
+		return BalanceView{}, fmt.Errorf("parse balance response: %w", err)
 	}
 	view := BalanceView{Details: []BalanceMetric{}}
 	switch kind {
@@ -336,7 +336,7 @@ func parseBalance(kind string, body []byte) (BalanceView, error) {
 		view.Summary = summaryText(view.Details[0])
 	}
 	if len(view.Details) == 0 {
-		return BalanceView{}, fmt.Errorf("余额接口返回成功，但响应格式无法识别")
+		return BalanceView{}, fmt.Errorf("balance endpoint returned success but the response format is unrecognized")
 	}
 	return view, nil
 }
