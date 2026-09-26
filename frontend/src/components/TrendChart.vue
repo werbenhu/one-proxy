@@ -28,7 +28,7 @@ const props = defineProps<{ days: string[]; series: { name: string; values: numb
 const PALETTE = ['#4c8dff', '#35c9a0', '#b57bff', '#e06c5f', '#e0b341', '#4cc3d9', '#ff7eb6', '#9acd32']
 const W = 660
 const H = 190
-const PAD = { l: 10, r: 10, t: 12, b: 24 }
+const PAD = { l: 34, r: 34, t: 12, b: 24 }
 const gridYs = [PAD.t, (PAD.t + H - PAD.b) / 2, H - PAD.b]
 
 const colored = computed(() => props.series.map((s, i) => ({ ...s, color: PALETTE[i % PALETTE.length] })))
@@ -37,7 +37,8 @@ const showDots = computed(() => props.days.length <= 10)
 
 function xAt(i: number): number {
   const n = props.days.length
-  return PAD.l + (n <= 1 ? 0 : (i * (W - PAD.l - PAD.r)) / (n - 1))
+  if (n <= 1) return W / 2
+  return PAD.l + (i * (W - PAD.l - PAD.r)) / (n - 1)
 }
 function yAt(v: number): number {
   const m = maxY.value
