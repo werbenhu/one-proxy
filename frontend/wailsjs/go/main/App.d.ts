@@ -31,6 +31,8 @@ export function GetSettings():Promise<service.SettingsView>;
 
 export function GetUsageDaily(arg1:string):Promise<Array<usage.ModelDayTokens>>;
 
+export function GetUsageHourlyToday():Promise<Array<usage.ModelHourTokens>>;
+
 export function GetUsageSummary(arg1:string):Promise<Array<usage.AggRow>>;
 
 export function ImportProviders():Promise<string>;

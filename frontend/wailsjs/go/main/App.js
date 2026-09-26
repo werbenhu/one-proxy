@@ -54,6 +54,10 @@ export function GetUsageDaily(arg1) {
   return window['go']['main']['App']['GetUsageDaily'](arg1);
 }
 
+export function GetUsageHourlyToday() {
+  return window['go']['main']['App']['GetUsageHourlyToday']();
+}
+
 export function GetUsageSummary(arg1) {
   return window['go']['main']['App']['GetUsageSummary'](arg1);
 }

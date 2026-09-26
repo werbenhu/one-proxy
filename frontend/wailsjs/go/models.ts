@@ -490,6 +490,22 @@ export namespace usage {
 	        this.tokens = source["tokens"];
 	    }
 	}
+	export class ModelHourTokens {
+	    bucket: string;
+	    model: string;
+	    tokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelHourTokens(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.bucket = source["bucket"];
+	        this.model = source["model"];
+	        this.tokens = source["tokens"];
+	    }
+	}
 	export class ModelStat {
 	    model: string;
 	    requests: number;
