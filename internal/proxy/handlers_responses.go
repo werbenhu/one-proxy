@@ -240,8 +240,14 @@ type responsesUsage struct {
 }
 
 func (u responsesUsage) canonical() anthropic.Usage {
+	// OpenAI/GLM 口径：input_tokens 为全量输入（含 cached），cached_tokens 是其子集。
+	// 内部记账沿用 Anthropic 口径（互斥），故输入侧要减去缓存读，避免合计时重复计算。
+	input := u.InputTokens - u.InputTokensDetails.CachedTokens
+	if input < 0 {
+		input = 0
+	}
 	return anthropic.Usage{
-		InputTokens:          int64(u.InputTokens),
+		InputTokens:          int64(input),
 		OutputTokens:         int64(u.OutputTokens),
 		CacheReadInputTokens: int64(u.InputTokensDetails.CachedTokens),
 	}

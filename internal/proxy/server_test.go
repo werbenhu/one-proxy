@@ -472,7 +472,8 @@ func TestResponsesUsageRecorded(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("responses 埋点未落库: %+v", rows)
 	}
-	if rows[0].InputTokens != 12 || rows[0].OutputTokens != 5 || rows[0].CacheRead != 4 {
+	// OpenAI 口径 input_tokens=12 含 cached=4，记账转互斥口径：input=8、cache_read=4。
+	if rows[0].InputTokens != 8 || rows[0].OutputTokens != 5 || rows[0].CacheRead != 4 {
 		t.Fatalf("responses token 记账: %+v", rows[0])
 	}
 }

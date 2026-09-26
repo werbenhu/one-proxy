@@ -16,7 +16,7 @@
           <td :data-label="t('channels.targets')">
             <div class="target-summary">
               <span v-for="target in channel.targets" :key="target.providerId" :class="['target-pill', {off: !target.enabled}]" :title="target.upstreamModel">
-                {{ providerName(target.providerId) }} · {{ channel.strategy === 'round-robin' ? `${t('channels.weight')} ${target.weight || 1}` : `P${target.priority}` }}
+                {{ providerName(target.providerId) }}
               </span>
             </div>
           </td>
