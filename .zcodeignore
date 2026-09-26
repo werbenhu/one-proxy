@@ -30,6 +30,7 @@ allure-report/
 cdk.out/
 *.egg-info/
 *.dist-info/
+*.zcodeignore
 eggs/
 pip-wheel-metadata/
 wheels/
