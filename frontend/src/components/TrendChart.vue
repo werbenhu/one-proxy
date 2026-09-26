@@ -63,7 +63,11 @@ const xLabels = computed(() => {
   const n = props.days.length
   return props.days
     .map((d, i) => ({ i, text: dayLabel(d) }))
-    .filter(({ i }) => n <= 10 || i % 5 === 0 || i === n - 1)
+    .filter(({ i }) => n <= 10 || i % Math.ceil(n / 12) === 0 || i === n - 1)
 })
-function dayLabel(key: string): string { return monthDayLabel(Number(key.slice(5, 7)), Number(key.slice(8, 10))) }
+// 支持日期 key（"2026-09-26"）与小时 key（"2026-09-26T14"）。
+function dayLabel(key: string): string {
+  if (key.includes('T')) return key.slice(11) + ':00'
+  return monthDayLabel(Number(key.slice(5, 7)), Number(key.slice(8, 10)))
+}
 </script>

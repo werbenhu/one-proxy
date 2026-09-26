@@ -432,6 +432,17 @@ func (s *Service) UsageDaily(rangeKey string) ([]usage.ModelDayTokens, error) {
 	return us.DailyByModel(since)
 }
 
+// UsageHourlyToday 今日逐小时 × 上游模型 token（今日分布图用）。
+func (s *Service) UsageHourlyToday() ([]usage.ModelHourTokens, error) {
+	us := s.server.UsageStore()
+	if us == nil {
+		return []usage.ModelHourTokens{}, nil
+	}
+	now := time.Now()
+	since := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return us.HourlyByModel(since)
+}
+
 // usageSince 解析用量页时间范围（today/7d/30d/all）。
 func usageSince(rangeKey string) (time.Time, error) {
 	var since time.Time

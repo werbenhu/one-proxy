@@ -29,6 +29,12 @@ export interface ModelDayTokens {
   tokens: number
 }
 
+export interface ModelHourTokens {
+  bucket: string
+  model: string
+  tokens: number
+}
+
 export interface ModelStat {
   model: string
   requests: number
@@ -181,6 +187,7 @@ declare global {
       SaveSettings(v: SettingsView): Promise<void>
       GetUsageSummary(rangeKey: string): Promise<AggRow[]>
       GetUsageDaily(rangeKey: string): Promise<ModelDayTokens[]>
+      GetUsageHourlyToday(): Promise<ModelHourTokens[]>
       GetProviderUsage(id: string): Promise<ProviderUsageView>
       StartGrokDeviceAuth(id: string): Promise<DeviceAuthInfo>
       CompleteGrokDeviceAuth(id: string, deviceCode: string): Promise<void>

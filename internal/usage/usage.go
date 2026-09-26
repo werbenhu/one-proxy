@@ -306,6 +306,14 @@ type ModelDayTokens struct {
 	Tokens int64  `json:"tokens"`
 }
 
+// ModelHourTokens 单个自然小时 × 上游模型的 token 量（今日分布图用）。
+// Bucket 形如 "2026-09-26T14"（本地时区，跨零点回看也能区分日期）。
+type ModelHourTokens struct {
+	Bucket string `json:"bucket"`
+	Model  string `json:"model"`
+	Tokens int64  `json:"tokens"`
+}
+
 // ProviderDaily 某提供商 since 以来的逐日 token（详情弹窗热力图用）。
 func (s *Store) ProviderDaily(providerID string, since time.Time) ([]DayTokens, error) {
 	rows, err := s.db.Query(`SELECT strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime'), SUM(`+totalTokens+`)
@@ -356,6 +364,25 @@ func (s *Store) DailyByModel(since time.Time) ([]ModelDayTokens, error) {
 	for rows.Next() {
 		var r ModelDayTokens
 		if err := rows.Scan(&r.Day, &r.Model, &r.Tokens); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// HourlyByModel 全部提供商 since 以来的逐小时 × 上游模型 token（今日分布图用）。
+func (s *Store) HourlyByModel(since time.Time) ([]ModelHourTokens, error) {
+	rows, err := s.db.Query(`SELECT strftime('%Y-%m-%dT%H', created_at, 'unixepoch', 'localtime'), model_upstream, SUM(`+totalTokens+`)
+		FROM request_log WHERE created_at >= ? GROUP BY 1, 2 ORDER BY 1`, since.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("逐小时模型用量查询: %w", err)
+	}
+	defer rows.Close()
+	out := []ModelHourTokens{}
+	for rows.Next() {
+		var r ModelHourTokens
+		if err := rows.Scan(&r.Bucket, &r.Model, &r.Tokens); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

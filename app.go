@@ -279,6 +279,10 @@ func (a *App) GetUsageDaily(rangeKey string) ([]usage.ModelDayTokens, error) {
 	return a.svc.UsageDaily(rangeKey)
 }
 
+func (a *App) GetUsageHourlyToday() ([]usage.ModelHourTokens, error) {
+	return a.svc.UsageHourlyToday()
+}
+
 func (a *App) GetProviderUsage(id string) service.ProviderUsageView {
 	return a.svc.ProviderUsage(id)
 }

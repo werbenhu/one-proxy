@@ -41,21 +41,24 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { app, type AggRow, type ModelDayTokens } from '../api'
+import { app, type AggRow, type ModelDayTokens, type ModelHourTokens } from '../api'
 import { t, formatNumber } from '../i18n'
 import TrendChart from '../components/TrendChart.vue'
 
 const rows = ref<AggRow[]>([])
 const daily = ref<ModelDayTokens[]>([])
+const hourly = ref<ModelHourTokens[]>([])
 const rangeKey = ref('today')
 
 async function refresh() {
-  const [summary, trend] = await Promise.all([
+  const [summary, trend, trendHourly] = await Promise.all([
     app().GetUsageSummary(rangeKey.value),
     app().GetUsageDaily(rangeKey.value),
+    app().GetUsageHourlyToday(),
   ])
   rows.value = summary
   daily.value = trend
+  hourly.value = trendHourly
 }
 
 onMounted(refresh)
@@ -64,7 +67,19 @@ function dayKey(d: Date): string {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
 }
 
+// 今日：x 轴为当前小时往前 12 小时；其余范围：x 轴为自然日。
 const chartDays = computed(() => {
+  if (rangeKey.value === 'today') {
+    const nowHour = new Date()
+    const keys: string[] = []
+    for (let i = 12; i >= 0; i--) {
+      const d = new Date(nowHour); d.setHours(d.getHours() - i, 0, 0, 0)
+      const day = dayKey(d)
+      const hour = String(d.getHours()).padStart(2, '0')
+      keys.push(day + 'T' + hour)
+    }
+    return keys
+  }
   const today = new Date(); today.setHours(0, 0, 0, 0)
   let n = 1
   if (rangeKey.value === '7d') n = 7
@@ -88,10 +103,19 @@ const chartDays = computed(() => {
 
 const chartSeries = computed(() => {
   const byModel = new Map<string, Map<string, number>>()
-  for (const r of daily.value) {
-    let m = byModel.get(r.model)
-    if (!m) { m = new Map(); byModel.set(r.model, m) }
-    m.set(r.day, (m.get(r.day) ?? 0) + r.tokens)
+  if (rangeKey.value === 'today') {
+    for (const r of hourly.value) {
+      // x 轴 key 与后端 bucket（"YYYY-MM-DDTHH"）一致，跨零点也能对上。
+      let m = byModel.get(r.model)
+      if (!m) { m = new Map(); byModel.set(r.model, m) }
+      m.set(r.bucket, (m.get(r.bucket) ?? 0) + r.tokens)
+    }
+  } else {
+    for (const r of daily.value) {
+      let m = byModel.get(r.model)
+      if (!m) { m = new Map(); byModel.set(r.model, m) }
+      m.set(r.day, (m.get(r.day) ?? 0) + r.tokens)
+    }
   }
   return [...byModel.entries()]
     .map(([name, m]) => ({ name, values: chartDays.value.map(d => m.get(d) ?? 0), total: chartDays.value.reduce((a, d) => a + (m.get(d) ?? 0), 0) }))
