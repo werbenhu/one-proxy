@@ -158,8 +158,12 @@ export namespace provider {
 export namespace service {
 	
 	export class BalanceMetric {
-	    label: string;
-	    value: string;
+	    label?: string;
+	    labelKey?: string;
+	    labelArgs?: string[];
+	    value?: string;
+	    valueKey?: string;
+	    valueArgs?: string[];
 	    percent?: number;
 	    resetAt?: string;
 	
@@ -170,7 +174,11 @@ export namespace service {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.label = source["label"];
+	        this.labelKey = source["labelKey"];
+	        this.labelArgs = source["labelArgs"];
 	        this.value = source["value"];
+	        this.valueKey = source["valueKey"];
+	        this.valueArgs = source["valueArgs"];
 	        this.percent = source["percent"];
 	        this.resetAt = source["resetAt"];
 	    }
