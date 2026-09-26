@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/werbenhu/one-proxy/internal/config"
 	"github.com/werbenhu/one-proxy/internal/provider"
@@ -20,10 +21,14 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "本地代理密钥校验失败")
 		return
 	}
+	if target := directTarget(r); target != "" {
+		h.listDirectModels(w, r, target)
+		return
+	}
 	seen := map[string]bool{}
 	var data []map[string]any
 	for _, ch := range h.store.Get().Channels {
-		if !ch.Enabled {
+		if !ch.Enabled || strings.TrimSpace(ch.Model) == "" {
 			continue
 		}
 		if seen[ch.Model] {
@@ -38,6 +43,32 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 		data = []map[string]any{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+}
+
+// listDirectModels 路径直连的模型列表：渠道只暴露其对外模型（通配渠道为空列表），
+// 提供商则实时拉取上游模型。
+func (h *Handler) listDirectModels(w http.ResponseWriter, r *http.Request, target string) {
+	cfg := h.store.Get()
+	data := []map[string]any{}
+	if ch, found := cfg.Channel(target); found {
+		if ch.Enabled && strings.TrimSpace(ch.Model) != "" {
+			data = append(data, map[string]any{"id": ch.Model, "object": "model", "created": 0, "owned_by": ch.ID})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+		return
+	}
+	if p, found := cfg.Provider(target); found && p.Enabled {
+		if adapter, ok := h.registry.Get(p.ID); ok {
+			if models, err := adapter.Models(r.Context()); err == nil {
+				for _, m := range models {
+					data = append(data, map[string]any{"id": m.ID, "object": "model", "created": 0, "owned_by": p.ID})
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+		return
+	}
+	writeError(w, http.StatusNotFound, "invalid_request_error", "直连目标 "+target+" 不存在或未启用")
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

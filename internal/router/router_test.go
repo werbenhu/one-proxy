@@ -225,28 +225,28 @@ func TestUpstreamSwitchNoState(t *testing.T) {
 	}
 }
 
-// 直连语法 + org/model 不误拆。
+// 直连（URL 路径前缀）：强制指定渠道/提供商，模型名原样透传。
 func TestDirectAndOrgModel(t *testing.T) {
 	channels, adapters := twoKimiChannels()
 	r, _ := newTestRouter(t, channels, adapters)
 
-	targets, err := r.Resolve("ch-b/kimi-k2.7-code")
+	targets, err := r.ResolveDirect("ch-b", "kimi-k2.7-code")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(targets) != 1 || targets[0].Channel.ID != "ch-b" || targets[0].UpstreamModel != "kimi-k2.7-code" {
 		t.Fatalf("直连解析: %+v", targets)
 	}
-	// OpenRouter org/model 不拆
-	if id, _, ok := splitDirect("openrouter/anthropic/claude-sonnet-4.6"); ok {
-		t.Fatalf("org/model 被误拆: %s", id)
-	}
-	// 直连未声明模型也可用
-	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "ch-a/anything", MaxTokens: 8}, "ch-a/anything"); err != nil {
+	// 直连未声明模型也可用（透传）
+	if _, err := r.InvokeDirect(context.Background(), &anthropic.Request{Model: "anything", MaxTokens: 8}, "anything", "ch-a"); err != nil {
 		t.Fatal(err)
 	}
 	if got := adapters["ch-a"].modelsSeen; len(got) != 1 || got[0] != "anything" {
 		t.Fatalf("直连模型: %v", got)
+	}
+	// 未知目标报错
+	if _, err := r.ResolveDirect("nope", "m"); err == nil {
+		t.Fatal("未知直连目标应报错")
 	}
 }
 
@@ -320,10 +320,144 @@ func TestDirectProviderRouting(t *testing.T) {
 	registry := provider.NewRegistry()
 	registry.Register("pv-a", a)
 	r := New(store, registry)
-	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "pv-a/special", MaxTokens: 8}, "pv-a/special"); err != nil {
+	if _, err := r.InvokeDirect(context.Background(), &anthropic.Request{Model: "special", MaxTokens: 8}, "special", "pv-a"); err != nil {
 		t.Fatal(err)
 	}
 	if len(a.modelsSeen) != 1 || a.modelsSeen[0] != "special" {
 		t.Fatalf("直连模型错误: %v", a.modelsSeen)
+	}
+}
+
+// 上游模型留空 = 透传客户端请求的对外模型名。
+func TestEmptyUpstreamModelPassthrough(t *testing.T) {
+	dir := t.TempDir()
+	store := config.NewStore(dir + "/config.json")
+	cfg := config.Default()
+	cfg.LocalKey = "k"
+	cfg.Providers = []config.ProviderAccount{{ID: "pv-a", Name: "A", Type: config.TypeOpenAICompat, BaseURL: "https://a", APIKey: "a", Enabled: true}}
+	cfg.Channels = []config.Channel{{ID: "ch-kimi", Name: "Kimi", Model: "kimi", Strategy: config.StrategyPriority, Enabled: true, Targets: []config.ChannelTarget{{ProviderID: "pv-a", Enabled: true}}}}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	a := &fakeAdapter{}
+	registry := provider.NewRegistry()
+	registry.Register("pv-a", a)
+	r := New(store, registry)
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "kimi", MaxTokens: 8}, "kimi"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.modelsSeen) != 1 || a.modelsSeen[0] != "kimi" {
+		t.Fatalf("透传模型错误: %v", a.modelsSeen)
+	}
+}
+
+// 同名渠道：按列表顺序首个启用的渠道命中；ch-<id>/<model> 直连语法指定特定渠道。
+func TestDuplicateModelChannels(t *testing.T) {
+	dir := t.TempDir()
+	store := config.NewStore(dir + "/config.json")
+	cfg := config.Default()
+	cfg.LocalKey = "k"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-a", Name: "A", Type: config.TypeOpenAICompat, BaseURL: "https://a", APIKey: "a", Enabled: true},
+		{ID: "pv-b", Name: "B", Type: config.TypeOpenAICompat, BaseURL: "https://b", APIKey: "b", Enabled: true},
+	}
+	cfg.Channels = []config.Channel{
+		{ID: "ch-a", Name: "A", Model: "kimi", Strategy: config.StrategyPriority, Enabled: true, Targets: []config.ChannelTarget{{ProviderID: "pv-a", UpstreamModel: "model-a", Enabled: true}}},
+		{ID: "ch-b", Name: "B", Model: "kimi", Strategy: config.StrategyPriority, Enabled: true, Targets: []config.ChannelTarget{{ProviderID: "pv-b", UpstreamModel: "model-b", Enabled: true}}},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	a, b := &fakeAdapter{}, &fakeAdapter{}
+	registry := provider.NewRegistry()
+	registry.Register("pv-a", a)
+	registry.Register("pv-b", b)
+	r := New(store, registry)
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "kimi", MaxTokens: 8}, "kimi"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.modelsSeen) != 1 || len(b.modelsSeen) != 0 {
+		t.Fatalf("首个同名渠道应命中: a=%v b=%v", a.modelsSeen, b.modelsSeen)
+	}
+	if _, err := r.InvokeDirect(context.Background(), &anthropic.Request{Model: "kimi", MaxTokens: 8}, "kimi", "ch-b"); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.modelsSeen) != 1 || b.modelsSeen[0] != "model-b" {
+		t.Fatalf("直连应命中 ch-b 并走其映射: %v", b.modelsSeen)
+	}
+}
+
+// 通配渠道（对外模型名留空）：匹配未被具名渠道声明的模型并原样透传。
+func TestWildcardChannelRouting(t *testing.T) {
+	dir := t.TempDir()
+	store := config.NewStore(dir + "/config.json")
+	cfg := config.Default()
+	cfg.LocalKey = "k"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-a", Name: "A", Type: config.TypeOpenAICompat, BaseURL: "https://a", APIKey: "a", Enabled: true},
+		{ID: "pv-b", Name: "B", Type: config.TypeOpenAICompat, BaseURL: "https://b", APIKey: "b", Enabled: true},
+	}
+	cfg.Channels = []config.Channel{
+		{ID: "ch-a", Name: "A", Model: "kimi", Strategy: config.StrategyPriority, Enabled: true, Targets: []config.ChannelTarget{{ProviderID: "pv-a", UpstreamModel: "model-a", Enabled: true}}},
+		{ID: "ch-any", Name: "Any", Model: "", Strategy: config.StrategyPriority, Enabled: true, Targets: []config.ChannelTarget{{ProviderID: "pv-b", Enabled: true}}},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	a, b := &fakeAdapter{}, &fakeAdapter{}
+	registry := provider.NewRegistry()
+	registry.Register("pv-a", a)
+	registry.Register("pv-b", b)
+	r := New(store, registry)
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "kimi", MaxTokens: 8}, "kimi"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.modelsSeen) != 1 || len(b.modelsSeen) != 0 {
+		t.Fatalf("具名渠道优先: a=%v b=%v", a.modelsSeen, b.modelsSeen)
+	}
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "gpt-5", MaxTokens: 8}, "gpt-5"); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.modelsSeen) != 1 || b.modelsSeen[0] != "gpt-5" {
+		t.Fatalf("通配渠道应透传模型名: %v", b.modelsSeen)
+	}
+}
+
+// 模型名本身带斜杠（OpenRouter 的 qwen/qwen-3.8）：无前缀按普通模型名匹配，
+// 直连语法只按第一个斜杠切，剩余部分完整保留。
+func TestSlashedModelNames(t *testing.T) {
+	dir := t.TempDir()
+	store := config.NewStore(dir + "/config.json")
+	cfg := config.Default()
+	cfg.LocalKey = "k"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-a", Name: "A", Type: config.TypeOpenAICompat, BaseURL: "https://a", APIKey: "a", Enabled: true},
+		{ID: "pv-b", Name: "B", Type: config.TypeOpenAICompat, BaseURL: "https://b", APIKey: "b", Enabled: true},
+	}
+	cfg.Channels = []config.Channel{
+		{ID: "ch-or", Name: "OR", Model: "qwen/qwen-3.8", Strategy: config.StrategyPriority, Enabled: true, Targets: []config.ChannelTarget{{ProviderID: "pv-a", Enabled: true}}},
+		{ID: "ch-any", Name: "Any", Model: "", Strategy: config.StrategyPriority, Enabled: true, Targets: []config.ChannelTarget{{ProviderID: "pv-b", Enabled: true}}},
+	}
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	a, b := &fakeAdapter{}, &fakeAdapter{}
+	registry := provider.NewRegistry()
+	registry.Register("pv-a", a)
+	registry.Register("pv-b", b)
+	r := New(store, registry)
+	// 具名渠道：qwen/qwen-3.8 不被误判为直连语法
+	if _, err := r.Invoke(context.Background(), &anthropic.Request{Model: "qwen/qwen-3.8", MaxTokens: 8}, "qwen/qwen-3.8"); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.modelsSeen) != 1 || a.modelsSeen[0] != "qwen/qwen-3.8" {
+		t.Fatalf("带斜杠模型名应走具名渠道并透传: %v", a.modelsSeen)
+	}
+	// 直连通配渠道：剩余部分完整保留透传
+	if _, err := r.InvokeDirect(context.Background(), &anthropic.Request{Model: "openai/gpt-4o", MaxTokens: 8}, "openai/gpt-4o", "ch-any"); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.modelsSeen) != 1 || b.modelsSeen[0] != "openai/gpt-4o" {
+		t.Fatalf("直连应保留完整模型名: %v", b.modelsSeen)
 	}
 }

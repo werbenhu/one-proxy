@@ -7,28 +7,14 @@
     </div>
 
     <div class="settings-grid">
-      <section class="card card-wide">
-        <h3 class="card-title">{{ t('settings.interface') }}</h3>
-        <div class="row">
-          <div class="field">
-            <label>{{ t('settings.theme') }}</label>
-            <div class="segmented">
-              <button type="button" :class="{ on: settings.theme !== 'light' }" @click="previewTheme('dark')">{{ t('settings.themeDark') }}</button>
-              <button type="button" :class="{ on: settings.theme === 'light' }" @click="previewTheme('light')">{{ t('settings.themeLight') }}</button>
-            </div>
-          </div>
-          <div class="field">
-            <label>{{ t('settings.language') }}</label>
-            <div class="segmented">
-              <button type="button" :class="{ on: settings.language !== 'en' }" @click="previewLocale('zh')">中文</button>
-              <button type="button" :class="{ on: settings.language === 'en' }" @click="previewLocale('en')">English</button>
-            </div>
+      <section class="card">
+        <div class="card-head">
+          <h3 class="card-title">{{ t('settings.base') }}</h3>
+          <div class="card-head-actions">
+            <span v-if="saved" class="save-ok">{{ t('settings.saved') }}</span>
+            <button class="primary" @click="save">{{ t('common.save') }}</button>
           </div>
         </div>
-      </section>
-
-      <section class="card">
-        <h3 class="card-title">{{ t('settings.base') }}</h3>
         <div class="row">
           <div class="field">
             <label>{{ t('settings.listenHost') }}</label>
@@ -52,9 +38,27 @@
           <label>{{ t('settings.retainDays') }}</label>
           <input v-model.number="settings.retainDays" type="number" min="1" />
         </div>
-        <div class="actions card-actions">
-          <button class="primary" @click="save">{{ t('common.save') }}</button>
-          <span v-if="saved" class="save-ok">{{ t('settings.saved') }}</span>
+        <div class="field">
+          <label>{{ t('settings.globalProxy') }}</label>
+          <input v-model="settings.globalProxy" :placeholder="t('settings.globalProxyPlaceholder')" />
+          <p class="field-hint">{{ t('settings.globalProxyHint') }}</p>
+        </div>
+        <div class="sub-heading">{{ t('settings.interface') }}</div>
+        <div class="row">
+          <div class="field">
+            <label>{{ t('settings.theme') }}</label>
+            <div class="segmented">
+              <button type="button" :class="{ on: settings.theme !== 'light' }" @click="previewTheme('dark')">{{ t('settings.themeDark') }}</button>
+              <button type="button" :class="{ on: settings.theme === 'light' }" @click="previewTheme('light')">{{ t('settings.themeLight') }}</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>{{ t('settings.language') }}</label>
+            <div class="segmented">
+              <button type="button" :class="{ on: settings.language !== 'en' }" @click="previewLocale('zh')">中文</button>
+              <button type="button" :class="{ on: settings.language === 'en' }" @click="previewLocale('en')">English</button>
+            </div>
+          </div>
         </div>
         <p v-if="error" class="error-text">{{ error }}</p>
       </section>
@@ -80,7 +84,7 @@ import { computed, onMounted, ref } from 'vue'
 import { app, type SettingsView } from '../api'
 import { applyLocale, applyTheme, t } from '../i18n'
 
-const settings = ref<SettingsView>({ listenHost: '127.0.0.1', listenPort: 8280, localKey: '', retainDays: 90, theme: 'dark', language: 'zh' })
+const settings = ref<SettingsView>({ listenHost: '127.0.0.1', listenPort: 8280, localKey: '', retainDays: 90, theme: 'dark', language: 'zh', globalProxy: '' })
 const saved = ref(false)
 const error = ref('')
 const showKey = ref(false)
@@ -102,18 +106,15 @@ function previewLocale(value: string) {
 const clients = computed(() => {
   const { listenHost, listenPort, localKey } = settings.value
   const base = `http://${listenHost}:${listenPort}`
+  const cid = t('settings.channelIdPlaceholder')
   return [
     {
       name: 'Anthropic（Claude Code）',
-      env: `ANTHROPIC_BASE_URL=${base}\nANTHROPIC_API_KEY=${localKey}`,
+      env: `ANTHROPIC_BASE_URL=${base}\nANTHROPIC_API_KEY=${localKey}\n# ${t('settings.forceChannel')}ANTHROPIC_BASE_URL=${base}/${cid}`,
     },
     {
-      name: 'OpenAI Chat',
-      env: `OPENAI_BASE_URL=${base}/v1\nOPENAI_API_KEY=${localKey}`,
-    },
-    {
-      name: 'OpenAI Responses',
-      env: `OPENAI_BASE_URL=${base}/v1\nOPENAI_API_KEY=${localKey}\n# ${t('settings.responsesPath')}`,
+      name: 'OpenAI（Chat / Responses）',
+      env: `OPENAI_BASE_URL=${base}/v1\nOPENAI_API_KEY=${localKey}\n# ${t('settings.forceChannel')}OPENAI_BASE_URL=${base}/${cid}/v1\n# ${t('settings.openaiEndpoints')}`,
     },
   ]
 })
@@ -156,10 +157,6 @@ async function copy(client: { name: string; env: string }) {
   padding: 20px;
 }
 
-.card-wide {
-  grid-column: 1 / -1;
-}
-
 .card-title {
   margin: 0 0 18px;
   font-size: 15px;
@@ -167,14 +164,44 @@ async function copy(client: { name: string; env: string }) {
   border-bottom: 1px solid var(--border);
 }
 
-.card-actions {
+.sub-heading {
+  margin: 18px 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.card-head {
+  display: flex;
   align-items: center;
-  margin: 18px 0 0;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.card-head .card-title {
+  margin: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.card-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .save-ok {
   color: var(--accent);
   font-size: 13px;
+}
+
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .client-block + .client-block {

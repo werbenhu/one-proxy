@@ -58,7 +58,7 @@
       </div>
     </div>
 
-    <div v-if="modalOpen" class="modal-mask" @click.self="modalOpen = false">
+    <div v-if="modalOpen" class="modal-mask">
       <div class="modal">
         <h3>{{ form.ID ? t('providers.editTitle') : t('providers.addTitle') }}</h3>
         <div v-if="!form.ID" class="field">
@@ -74,9 +74,8 @@
         </div>
         <div class="field"><label>Base URL</label><input v-model="form.BaseURL" :placeholder="form.Type === 'grok' ? t('providers.baseUrlPlaceholder') : 'https://...'" /></div>
         <div class="field">
-          <label>{{ t('providers.proxyLabel') }}</label>
-          <input v-model="form.ProxyURL" :placeholder="t('providers.proxyPlaceholder')" />
-          <small class="muted">{{ t('providers.proxyHint') }}</small>
+          <label class="check"><input type="checkbox" v-model="form.UseProxy" />{{ t('providers.useProxy') }}</label>
+          <small class="muted">{{ t('providers.useProxyHint') }}</small>
         </div>
         <div v-if="form.Type === 'grok'" class="field">
           <label>{{ t('providers.authMode') }}</label>
@@ -147,7 +146,7 @@ const keyVisible = ref(false)
 const balanceKeyInput = ref('')
 const balanceKeyVisible = ref(false)
 
-function emptyForm(): ProviderInput { return { ID: '', Name: '', Vendor: '', Type: 'anthropic-compat', BaseURL: '', APIKey: '', Extra: null, AuthMode: '', BalanceKind: '', BalanceURL: '', BalanceKey: '', ProxyURL: '', Enabled: true } }
+function emptyForm(): ProviderInput { return { ID: '', Name: '', Vendor: '', Type: 'anthropic-compat', BaseURL: '', APIKey: '', Extra: null, AuthMode: '', BalanceKind: '', BalanceURL: '', BalanceKey: '', UseProxy: false, Enabled: true } }
 function onTypeChange() { form.value.AuthMode = form.value.Type === 'grok' ? (form.value.AuthMode || 'oauth') : '' }
 async function refresh() { providers.value = await app().GetProviders(); autoCheckBalances() }
 async function exportProviders() {
@@ -180,7 +179,7 @@ function resetKeys(apiKey: string, balanceKey: string) {
   fetchedKeys.value = null
 }
 function edit(p: ProviderView) {
-  form.value = { ID: p.id, Name: p.name, Vendor: p.vendor, Type: p.type, BaseURL: p.baseUrl, APIKey: '', Extra: null, AuthMode: p.authMode || '', BalanceKind: p.balanceKind, BalanceURL: p.balanceUrl, BalanceKey: '', ProxyURL: p.proxyUrl, Enabled: p.enabled }
+  form.value = { ID: p.id, Name: p.name, Vendor: p.vendor, Type: p.type, BaseURL: p.baseUrl, APIKey: '', Extra: null, AuthMode: p.authMode || '', BalanceKind: p.balanceKind, BalanceURL: p.balanceUrl, BalanceKey: '', UseProxy: p.useProxy, Enabled: p.enabled }
   resetKeys(p.apiKeyHint ? KEY_MASK : '', p.balanceKeyHint ? KEY_MASK : '')
   presetKey.value = ''; formError.value = ''; oauthInfo.value = null; modalOpen.value = true
 }
@@ -203,7 +202,11 @@ async function save() {
   try { await app().SaveProvider(form.value); modalOpen.value = false; await refresh() } catch (e) { formError.value = String(e) }
 }
 async function remove(id: string) { if (!await confirmDialog(t('providers.deleteConfirm'))) return; try { await app().DeleteProvider(id); await refresh() } catch (e) { toast(String(e), 'error') } }
-async function test(id: string) { try { await app().TestProvider(id); toast(t('providers.testOk')) } catch (e) { toast(t('providers.testFailed') + String(e), 'error', 5000) } }
+async function test(id: string) { try { await app().TestProvider(id); toast(t('providers.testOk')) } catch (e) {
+  const p = providers.value.find(x => x.id === id)
+  const hint = p && !p.useProxy && isNetworkError(e) ? '\n' + t('providers.proxyHintOnError') : ''
+  toast(t('providers.testFailed') + String(e) + hint, 'error', 6000)
+} }
 async function discoverModels(id: string) { try { const models = await app().GetProviderModels(id); modelList.value = models.map(m => m.id); modelsOpen.value = true } catch (e) { toast(t('providers.modelsFailed') + String(e), 'error', 5000) } }
 function openUsage(p: ProviderView) { usageFor.value = p }
 async function fetchBalance(id: string) { try { balances.value[id] = await app().GetProviderBalance(id) } catch { /* 自动查询失败时保持「查询」按钮 */ } }
@@ -218,8 +221,17 @@ function quotaMetrics(id: string) {
 }
 function shortLabel(label: string) { return label.replace(/窗口|额度|限额/g, '') }
 function barClass(percent: number) { return percent >= 90 ? 'danger' : percent >= 70 ? 'warn' : '' }
-async function startOAuth() { try { oauthInfo.value = await app().StartGrokDeviceAuth(form.value.ID) } catch (e) { formError.value = String(e) } }
-async function pollOAuth() { if (!oauthInfo.value) return; try { await app().CompleteGrokDeviceAuth(form.value.ID, oauthInfo.value.deviceCode); oauthInfo.value = null; toast(t('providers.authSuccess')) } catch (e) { formError.value = String(e) } }
+function isNetworkError(e: unknown): boolean {
+  const msg = String(e).toLowerCase()
+  return /\beof\b|connection reset|timeout|timed out|refused|no such host|network is unreachable|tls handshake/.test(msg)
+}
+function withProxyHint(e: unknown): string {
+  const msg = String(e)
+  if (!form.value.UseProxy && isNetworkError(e)) return msg + '\n' + t('providers.proxyHintOnError')
+  return msg
+}
+async function startOAuth() { try { oauthInfo.value = await app().StartGrokDeviceAuth(form.value.ID) } catch (e) { formError.value = withProxyHint(e) } }
+async function pollOAuth() { if (!oauthInfo.value) return; try { await app().CompleteGrokDeviceAuth(form.value.ID, oauthInfo.value.deviceCode); oauthInfo.value = null; toast(t('providers.authSuccess')) } catch (e) { formError.value = withProxyHint(e) } }
 function formatNumber(value: number) { return new Intl.NumberFormat('zh-CN').format(value) }
 function formatTime(value: string) { return value ? new Date(value).toLocaleString() : '' }
 function resetText(value: string) {

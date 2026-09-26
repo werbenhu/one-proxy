@@ -62,8 +62,8 @@ export function ImportProviders() {
   return window['go']['main']['App']['ImportProviders']();
 }
 
-export function SaveChannel(arg1) {
-  return window['go']['main']['App']['SaveChannel'](arg1);
+export function SaveChannel(arg1, arg2) {
+  return window['go']['main']['App']['SaveChannel'](arg1, arg2);
 }
 
 export function SaveProvider(arg1) {

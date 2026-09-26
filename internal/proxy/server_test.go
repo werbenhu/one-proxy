@@ -192,9 +192,9 @@ func TestDirectChannelSyntax(t *testing.T) {
 			Models: []string{"other"}, Enabled: true},
 	}
 	ts, _ := newTestServer(t, channels)
-	// 直连：ch-kimi/kimi-k3 即使渠道没声明 kimi-k3 也可用（调试语法）
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(
-		`{"model":"ch-kimi/kimi-k3","max_tokens":8,"messages":[]}`))
+	// 路径直连：/ch-kimi/v1/messages 强制走目标 ch-kimi，模型名原样透传
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-kimi/v1/messages", strings.NewReader(
+		`{"model":"kimi-k3","max_tokens":8,"messages":[]}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -206,14 +206,6 @@ func TestDirectChannelSyntax(t *testing.T) {
 	}
 	if gotPath != "/v1/messages" || gotModel != `"kimi-k3"` {
 		t.Fatalf("直连重写错误: path=%s model=%s", gotPath, gotModel)
-	}
-}
-
-func TestOpenRouterModelNameNotSplit(t *testing.T) {
-	// openrouter/anthropic/claude-... 不能被当直连语法拆分
-	model, direct := resolveModel("anthropic/claude-sonnet-4.6")
-	if direct != "" || model != "anthropic/claude-sonnet-4.6" {
-		t.Fatalf("org/model 被误拆: %s %s", model, direct)
 	}
 }
 

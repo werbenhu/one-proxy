@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/werbenhu/one-proxy/internal/config"
@@ -27,7 +28,7 @@ type ProviderView struct {
 	BalanceKind    string `json:"balanceKind"`
 	BalanceURL     string `json:"balanceUrl"`
 	BalanceKeyHint string `json:"balanceKeyHint"`
-	ProxyURL       string `json:"proxyUrl"`
+	UseProxy       bool   `json:"useProxy"`
 	Enabled        bool   `json:"enabled"`
 	Status         string `json:"status"`
 	CoolingUntil   string `json:"coolingUntil,omitempty"`
@@ -50,13 +51,14 @@ type ChannelView struct {
 
 // SettingsView 设置视图（密钥脱敏）。
 type SettingsView struct {
-	ListenHost string `json:"listenHost"`
-	ListenPort int    `json:"listenPort"`
-	LocalKey   string `json:"localKey"` // 本地密钥需要展示给用户复制
-	RetainDays int    `json:"retainDays"`
-	Theme      string `json:"theme"`    // dark | light
-	Language   string `json:"language"` // zh | en
-	Running    bool   `json:"running"`
+	ListenHost  string `json:"listenHost"`
+	ListenPort  int    `json:"listenPort"`
+	LocalKey    string `json:"localKey"` // 本地密钥需要展示给用户复制
+	RetainDays  int    `json:"retainDays"`
+	Theme       string `json:"theme"`    // dark | light
+	Language    string `json:"language"` // zh | en
+	GlobalProxy string `json:"globalProxy"` // 全局 HTTP 代理，提供商勾选「使用代理」时生效
+	Running     bool   `json:"running"`
 }
 
 // PresetView 提供商预设（添加向导用）。
@@ -138,7 +140,7 @@ func (s *Service) Providers() []ProviderView {
 			ID: p.ID, Name: p.Name, Vendor: p.Vendor, Type: p.Type, BaseURL: p.BaseURL,
 			APIKeyHint: config.MaskKey(p.APIKey), HasExtra: len(p.Extra) > 0,
 			BalanceKind: p.BalanceKind, BalanceURL: p.BalanceURL, BalanceKeyHint: config.MaskKey(p.BalanceKey), Enabled: p.Enabled,
-			ProxyURL:    p.ProxyURL,
+			UseProxy:    p.UseProxy,
 			TodayTokens: today[p.ID], WeekTokens: week[p.ID], MonthTokens: month[p.ID],
 		}
 		if p.Type == config.TypeGrok {
@@ -306,14 +308,32 @@ func (s *Service) DeleteProvider(id string) error {
 	})
 }
 
-func (s *Service) SaveChannel(ch config.Channel) error {
+// SaveChannel 保存渠道。originalID 非空且与 ch.ID 不同表示改名：移除旧条目。
+func (s *Service) SaveChannel(ch config.Channel, originalID string) error {
+	ch.ID = strings.TrimSpace(ch.ID)
 	if ch.ID == "" {
 		ch.ID = fmt.Sprintf("ch-%s", randomID(6))
+	}
+	if originalID != "" && originalID != ch.ID {
+		for _, old := range s.store.Get().Channels {
+			if old.ID == ch.ID {
+				return fmt.Errorf("渠道 ID %q 已存在", ch.ID)
+			}
+		}
 	}
 	if ch.Strategy == "" {
 		ch.Strategy = config.StrategyPriority
 	}
 	return s.store.Update(func(c *config.Config) {
+		if originalID != "" && originalID != ch.ID {
+			out := c.Channels[:0]
+			for _, old := range c.Channels {
+				if old.ID != originalID {
+					out = append(out, old)
+				}
+			}
+			c.Channels = out
+		}
 		replaced := false
 		for i := range c.Channels {
 			if c.Channels[i].ID == ch.ID {
@@ -346,6 +366,7 @@ func (s *Service) Settings() SettingsView {
 		ListenHost: cfg.ListenHost, ListenPort: cfg.ListenPort,
 		LocalKey: cfg.LocalKey, RetainDays: cfg.RetainDays,
 		Theme: cfg.Theme, Language: cfg.Language,
+		GlobalProxy: cfg.GlobalProxy,
 	}
 }
 
@@ -353,6 +374,7 @@ func (s *Service) SaveSettings(v SettingsView) error {
 	return s.store.Update(func(c *config.Config) {
 		c.ListenHost, c.ListenPort = v.ListenHost, v.ListenPort
 		c.LocalKey, c.RetainDays = v.LocalKey, v.RetainDays
+		c.GlobalProxy = strings.TrimSpace(v.GlobalProxy)
 		switch v.Theme {
 		case "dark", "light":
 			c.Theme = v.Theme

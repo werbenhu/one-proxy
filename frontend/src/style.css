@@ -117,7 +117,7 @@ code { color: var(--code); font-family: "Cascadia Code", Consolas, monospace; }
 .row-actions button { padding: 5px 9px; }
 
 .modal-mask {
-  position: fixed; inset: 0; background: rgba(0,0,0,.5);
+  position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.5);
   display: flex; align-items: center; justify-content: center;
 }
 .modal {
@@ -198,6 +198,8 @@ code { color: var(--code); font-family: "Cascadia Code", Consolas, monospace; }
 .target-summary { display: flex; flex-wrap: wrap; gap: 5px; }
 .target-pill { background: #182725; color: #a8ccc3; border: 1px solid #29433d; padding: 2px 7px; border-radius: 4px; font-size: 11px; }
 .target-pill.off { opacity: .45; }
+.channel-id { color: var(--muted); font-size: 11px; font-family: "Cascadia Code", Consolas, monospace; overflow-wrap: anywhere; }
+.field-hint { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; }
 .grok-auth-mode { margin-bottom: 6px; }
 .grok-auth-mode button { padding: 6px 18px; }
 .strategy-field { margin-bottom: 18px; }

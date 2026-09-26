@@ -35,7 +35,7 @@ export function GetUsageSummary(arg1:string):Promise<Array<usage.AggRow>>;
 
 export function ImportProviders():Promise<string>;
 
-export function SaveChannel(arg1:config.Channel):Promise<void>;
+export function SaveChannel(arg1:config.Channel,arg2:string):Promise<void>;
 
 export function SaveProvider(arg1:config.ProviderAccount):Promise<void>;
 

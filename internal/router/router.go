@@ -86,46 +86,64 @@ type Target struct {
 	UpstreamModel string
 }
 
-// Resolve 解析模型名（含 ch-<id>/<model> 直连语法）并返回候选列表
-// （按 Priority 降序；直连时为单元素）。
+// Resolve 按对外模型名匹配渠道并返回候选列表（按 Priority 降序）。
+// 具名渠道优先（允许重名，按列表顺序首个启用的命中）；
+// 都没有命中时退到通配渠道（对外模型名留空）。
+// 强制指定渠道/提供商走 URL 路径前缀（/<id>/v1/...），见 ResolveDirect。
 func (r *Router) Resolve(model string) ([]Target, error) {
 	cfg := r.store.Get()
-	if id, rest, ok := splitDirect(model); ok {
-		p, found := cfg.Provider(id)
-		if found && p.Enabled {
-			adapter, registered := r.registry.Get(p.ID)
-			if !registered {
-				return nil, fmt.Errorf("提供商 %s 适配器未注册", p.ID)
-			}
-			return []Target{{Channel: config.Channel{ID: id, Name: p.Name, Model: model, Enabled: true}, Provider: p, Adapter: adapter, UpstreamModel: rest}}, nil
+	for _, ch := range cfg.Channels {
+		if ch.Enabled && ch.Model == model {
+			return r.resolveChannel(cfg, ch, model)
 		}
-		ch, channelFound := cfg.Channel(id)
-		if !channelFound || !ch.Enabled {
-			return nil, fmt.Errorf("直连目标 %s 不存在或未启用", id)
-		}
-		targets := r.targetsForChannel(cfg, ch)
-		for i := range targets {
-			targets[i].UpstreamModel = rest
-		}
-		if len(targets) == 0 {
-			return nil, fmt.Errorf("渠道 %s 没有可用提供商", id)
-		}
-		return targets, nil
 	}
 	for _, ch := range cfg.Channels {
-		if !ch.Enabled || ch.Model != model {
-			continue
+		if ch.Enabled && strings.TrimSpace(ch.Model) == "" {
+			return r.resolveChannel(cfg, ch, model)
 		}
-		candidates := r.targetsForChannel(cfg, ch)
-		if len(candidates) == 0 {
-			return nil, fmt.Errorf("%w: %s（渠道没有已启用的提供商）", ErrModelNotDeclared, model)
+	}
+	return nil, fmt.Errorf("%w: %s", ErrModelNotDeclared, model)
+}
+
+// ResolveDirect 强制指定渠道或提供商（客户端 BASE_URL 路径前缀 /<id>/），
+// model 作为请求模型名：渠道走正常的目标/策略/透传逻辑；提供商为单候选透传。
+func (r *Router) ResolveDirect(id, model string) ([]Target, error) {
+	cfg := r.store.Get()
+	if ch, found := cfg.Channel(id); found {
+		if !ch.Enabled {
+			return nil, fmt.Errorf("渠道 %s 未启用", id)
 		}
-		if ch.Strategy == config.StrategyRoundRobin {
-			return r.rotate(ch.ID, candidates), nil
+		candidates, err := r.resolveChannel(cfg, ch, model)
+		if err != nil {
+			return nil, fmt.Errorf("渠道 %s 没有可用提供商", id)
 		}
 		return candidates, nil
 	}
-	return nil, fmt.Errorf("%w: %s", ErrModelNotDeclared, model)
+	if p, found := cfg.Provider(id); found && p.Enabled {
+		adapter, registered := r.registry.Get(p.ID)
+		if !registered {
+			return nil, fmt.Errorf("提供商 %s 适配器未注册", p.ID)
+		}
+		return []Target{{Channel: config.Channel{ID: id, Name: p.Name, Model: model, Enabled: true}, Provider: p, Adapter: adapter, UpstreamModel: model}}, nil
+	}
+	return nil, fmt.Errorf("直连目标 %s 不存在或未启用", id)
+}
+
+func (r *Router) resolveChannel(cfg config.Config, ch config.Channel, model string) ([]Target, error) {
+	candidates := r.targetsForChannel(cfg, ch)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("%w: %s（渠道没有已启用的提供商）", ErrModelNotDeclared, model)
+	}
+	// 上游模型留空 = 透传：把客户端请求的模型名原样发给上游
+	for i := range candidates {
+		if strings.TrimSpace(candidates[i].UpstreamModel) == "" {
+			candidates[i].UpstreamModel = model
+		}
+	}
+	if ch.Strategy == config.StrategyRoundRobin {
+		return r.rotate(ch.ID, candidates), nil
+	}
+	return candidates, nil
 }
 
 func (r *Router) targetsForChannel(cfg config.Config, ch config.Channel) []Target {
@@ -201,18 +219,6 @@ func (r *Router) rotate(channelID string, candidates []Target) []Target {
 	return out
 }
 
-// splitDirect parses provider/channel direct routing without mistaking org/model.
-func splitDirect(model string) (id, rest string, ok bool) {
-	if !strings.HasPrefix(model, "ch-") && !strings.HasPrefix(model, "pv-") {
-		return "", "", false
-	}
-	idx := strings.Index(model, "/")
-	if idx <= 0 {
-		return "", "", false
-	}
-	return model[:idx], model[idx+1:], true
-}
-
 // pickAvailable 过滤不可用候选；返回可用列表与不可用原因（聚合错误用）。
 func (r *Router) pickAvailable(candidates []Target) ([]Target, []string) {
 	now := r.now()
@@ -238,6 +244,19 @@ func (r *Router) Invoke(ctx context.Context, req *anthropic.Request, requestedMo
 	if err != nil {
 		return nil, err
 	}
+	return r.invoke(ctx, req, requestedModel, candidates)
+}
+
+// InvokeDirect 同 Invoke，但强制走 id 指定的渠道/提供商（URL 路径前缀）。
+func (r *Router) InvokeDirect(ctx context.Context, req *anthropic.Request, requestedModel, id string) (*anthropic.Response, error) {
+	candidates, err := r.ResolveDirect(id, req.Model)
+	if err != nil {
+		return nil, err
+	}
+	return r.invoke(ctx, req, requestedModel, candidates)
+}
+
+func (r *Router) invoke(ctx context.Context, req *anthropic.Request, requestedModel string, candidates []Target) (*anthropic.Response, error) {
 	available, reasons := r.pickAvailable(candidates)
 	if len(available) == 0 {
 		return nil, &ErrNoCandidates{Reasons: reasons}
@@ -294,6 +313,19 @@ func (r *Router) Stream(ctx context.Context, req *anthropic.Request, requestedMo
 	if err != nil {
 		return nil, err
 	}
+	return r.stream(ctx, req, requestedModel, candidates)
+}
+
+// StreamDirect 同 Stream，但强制走 id 指定的渠道/提供商（URL 路径前缀）。
+func (r *Router) StreamDirect(ctx context.Context, req *anthropic.Request, requestedModel, id string) (<-chan anthropic.Event, error) {
+	candidates, err := r.ResolveDirect(id, req.Model)
+	if err != nil {
+		return nil, err
+	}
+	return r.stream(ctx, req, requestedModel, candidates)
+}
+
+func (r *Router) stream(ctx context.Context, req *anthropic.Request, requestedModel string, candidates []Target) (<-chan anthropic.Event, error) {
 	available, reasons := r.pickAvailable(candidates)
 	if len(available) == 0 {
 		return nil, &ErrNoCandidates{Reasons: reasons}

@@ -46,7 +46,7 @@ func TestValidateErrors(t *testing.T) {
 		{"空 host", func(c *Config) { c.ListenHost = "" }, "监听地址"},
 		{"非法端口", func(c *Config) { c.ListenPort = 0 }, "端口"},
 		{"空密钥", func(c *Config) { c.LocalKey = "" }, "密钥"},
-		{"渠道ID无前缀", func(c *Config) { c.Channels[0].ID = "kimi1" }, "ch-"},
+		{"渠道ID含斜杠", func(c *Config) { c.Channels[0].ID = "a/b" }, "不能包含"},
 		{"渠道ID重复", func(c *Config) {
 			c.Channels = append(c.Channels, c.Channels[0])
 		}, "重复"},
@@ -115,6 +115,29 @@ func TestValidateModernProviderAndChannel(t *testing.T) {
 	if err := Validate(cfg); err != nil { t.Fatal(err) }
 	cfg.Channels[0].Targets[0].ProviderID = "missing"
 	if err := Validate(cfg); err == nil || !strings.Contains(err.Error(), "不存在") { t.Fatalf("应拒绝悬空绑定: %v", err) }
+}
+
+// 不同渠道允许暴露相同的对外模型名。
+func TestValidateDuplicateChannelModelAllowed(t *testing.T) {
+	cfg := Default()
+	cfg.Providers = []ProviderAccount{{ID: "pv-a", Name: "A", Type: TypeOpenAICompat, BaseURL: "https://example.com/v1", APIKey: "k", Enabled: true}}
+	cfg.Channels = []Channel{
+		{ID: "ch-a", Name: "A", Model: "kimi", Strategy: StrategyPriority, Enabled: true, Targets: []ChannelTarget{{ProviderID: "pv-a", Enabled: true}}},
+		{ID: "ch-b", Name: "B", Model: "kimi", Strategy: StrategyPriority, Enabled: true, Targets: []ChannelTarget{{ProviderID: "pv-a", Enabled: true}}},
+	}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("同名渠道应允许: %v", err)
+	}
+}
+
+// 对外模型名留空 = 通配渠道，校验放行。
+func TestValidateWildcardChannel(t *testing.T) {
+	cfg := Default()
+	cfg.Providers = []ProviderAccount{{ID: "pv-a", Name: "A", Type: TypeOpenAICompat, BaseURL: "https://example.com/v1", APIKey: "k", Enabled: true}}
+	cfg.Channels = []Channel{{ID: "ch-any", Name: "Any", Model: "", Strategy: StrategyPriority, Enabled: true, Targets: []ChannelTarget{{ProviderID: "pv-a", Enabled: true}}}}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("通配渠道应允许: %v", err)
+	}
 }
 
 func TestStoreCorruptRecovery(t *testing.T) {

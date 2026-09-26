@@ -18,13 +18,6 @@ func checkKey(r *http.Request, key string) bool {
 	return len(got) == len(key) && subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1
 }
 
-// resolveModel 返回 (模型名, 是否直连语法)。直连 ch-<id>/<model> 由 router
-// 解析；这里只拆出模型名给 canonical 转换前的 probe 用。
-func resolveModel(raw string) (model, directChannel string) {
-	if strings.HasPrefix(raw, "ch-") {
-		if idx := strings.Index(raw, "/"); idx > 0 {
-			return raw[idx+1:], raw[:idx]
-		}
-	}
-	return raw, ""
-}
+// directTarget 取 URL 路径首段的强制路由目标（/<id>/v1/... 注册形式）；
+// 普通请求返回空串。
+func directTarget(r *http.Request) string { return r.PathValue("target") }

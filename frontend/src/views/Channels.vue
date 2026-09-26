@@ -10,8 +10,8 @@
       <tbody>
         <tr v-for="channel in channels" :key="channel.id">
           <td :data-label="t('channels.colStatus')"><span v-if="!channel.enabled" class="badge disabled">{{ t('channels.statusDisabled') }}</span><span v-else-if="channel.healthy === channel.total" class="badge ok">{{ t('channels.statusOk') }}</span><span v-else-if="channel.healthy > 0" class="badge cooling">{{ t('channels.statusPartial') }}</span><span v-else class="badge auth-failed">{{ t('channels.statusUnavailable') }}</span></td>
-          <td :data-label="t('channels.name')"><strong>{{ channel.name }}</strong></td>
-          <td :data-label="t('channels.colModel')"><code>{{ channel.model }}</code></td>
+          <td :data-label="t('channels.name')"><strong>{{ channel.name }}</strong><div class="channel-id">{{ channel.id }}</div></td>
+          <td :data-label="t('channels.colModel')"><code>{{ channel.model || t('channels.wildcardModel') }}</code></td>
           <td :data-label="t('channels.strategy')">{{ channel.strategy === 'round-robin' ? t('channels.strategyRoundRobin') : t('channels.strategyPriority') }}</td>
           <td :data-label="t('channels.targets')">
             <div class="target-summary">
@@ -26,12 +26,17 @@
     </table>
     <div v-else class="empty-state">{{ t('channels.empty') }}</div>
 
-    <div v-if="modalOpen" class="modal-mask" @click.self="modalOpen = false">
+    <div v-if="modalOpen" class="modal-mask">
       <div class="modal modal-wide">
-        <h3>{{ form.ID ? t('channels.editTitle') : t('channels.addTitle') }}</h3>
+        <h3>{{ editing ? t('channels.editTitle') : t('channels.addTitle') }}</h3>
         <div class="row">
           <div class="field"><label>{{ t('channels.name') }}</label><input v-model="form.Name" :placeholder="t('channels.namePlaceholder')" /></div>
-          <div class="field"><label>{{ t('channels.modelLabel') }}</label><input v-model="form.Model" placeholder="claude-sonnet-4-6" /></div>
+          <div class="field"><label>{{ t('channels.modelLabel') }}</label><input v-model="form.Model" :placeholder="t('channels.modelPlaceholder')" /></div>
+        </div>
+        <div class="field">
+          <label>{{ t('channels.idLabel') }}</label>
+          <input v-model="form.ID" :placeholder="editing ? '' : t('channels.idPlaceholder')" />
+          <span class="field-hint">{{ t('channels.idHint') }}</span>
         </div>
         <div class="field strategy-field">
           <label>{{ t('channels.strategy') }}</label>
@@ -71,6 +76,8 @@ import SuggestInput from '../components/SuggestInput.vue'
 const channels = ref<ChannelView[]>([])
 const providers = ref<ProviderView[]>([])
 const modalOpen = ref(false)
+const editing = ref(false)
+const originalID = ref('')
 const formError = ref('')
 const form = ref<ChannelInput>(emptyForm())
 
@@ -87,17 +94,20 @@ async function loadModels(id: string) {
     providerModels.value = { ...providerModels.value, [id]: models.map(m => m.id) }
   } catch { /* 模型列表不可用时仍可手动输入 */ }
 }
-function openAdd() { form.value = emptyForm(); form.value.Targets.push(emptyTarget()); formError.value = ''; loadModels(form.value.Targets[0].ProviderID); modalOpen.value = true }
+function openAdd() { editing.value = false; originalID.value = ''; form.value = emptyForm(); form.value.Targets.push(emptyTarget()); formError.value = ''; loadModels(form.value.Targets[0].ProviderID); modalOpen.value = true }
 function addTarget() { form.value.Targets.push(emptyTarget()); loadModels(form.value.Targets[form.value.Targets.length - 1].ProviderID) }
 function edit(channel: ChannelView) {
+  editing.value = true; originalID.value = channel.id
   form.value = { ID: channel.id, Name: channel.name, Model: channel.model, Strategy: channel.strategy, Enabled: channel.enabled, Targets: channel.targets.map(t => ({ ProviderID: t.providerId, UpstreamModel: t.upstreamModel, Priority: t.priority, Weight: t.weight || 1, Enabled: t.enabled })) }
   form.value.Targets.forEach(t => loadModels(t.ProviderID))
   formError.value = ''; modalOpen.value = true
 }
 async function save() {
-  if (!form.value.Name.trim() || !form.value.Model.trim()) { formError.value = t('channels.nameModelRequired'); return }
-  if (!form.value.Targets.length || form.value.Targets.some(t => !t.ProviderID || !t.UpstreamModel.trim())) { formError.value = t('channels.targetFieldsRequired'); return }
-  try { await app().SaveChannel(form.value); modalOpen.value = false; await refresh() } catch (e) { formError.value = String(e) }
+  if (!form.value.Name.trim()) { formError.value = t('channels.nameRequired'); return }
+  if (!form.value.Targets.length || form.value.Targets.some(t => !t.ProviderID)) { formError.value = t('channels.targetFieldsRequired'); return }
+  form.value.ID = form.value.ID.trim()
+  if (form.value.ID && form.value.ID !== originalID.value && channels.value.some(c => c.id === form.value.ID)) { formError.value = t('channels.idDuplicate'); return }
+  try { await app().SaveChannel(form.value, originalID.value); modalOpen.value = false; await refresh() } catch (e) { formError.value = String(e) }
 }
 async function remove(id: string) { if (!await confirmDialog(t('channels.deleteConfirm'))) return; await app().DeleteChannel(id); await refresh() }
 </script>

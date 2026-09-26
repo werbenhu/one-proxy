@@ -10,7 +10,7 @@ export interface ProviderView {
   balanceKind: string
   balanceUrl: string
   balanceKeyHint: string
-  proxyUrl: string
+  useProxy: boolean
   enabled: boolean
   status: string
   coolingUntil?: string
@@ -60,7 +60,7 @@ export interface ProviderInput {
   BalanceKind: string
   BalanceURL: string
   BalanceKey: string
-  ProxyURL: string
+  UseProxy: boolean
   Enabled: boolean
 }
 
@@ -124,6 +124,7 @@ export interface SettingsView {
   retainDays: number
   theme: string
   language: string
+  globalProxy: string
 }
 
 export interface AggRow {
@@ -161,7 +162,7 @@ declare global {
       GetProviderModels(id: string): Promise<ModelInfo[]>
       GetProviderBalance(id: string): Promise<BalanceView>
       GetChannels(): Promise<ChannelView[]>
-      SaveChannel(channel: ChannelInput): Promise<void>
+      SaveChannel(channel: ChannelInput, originalID: string): Promise<void>
       DeleteChannel(id: string): Promise<void>
       GetPresets(): Promise<PresetView[]>
       GetSettings(): Promise<SettingsView>

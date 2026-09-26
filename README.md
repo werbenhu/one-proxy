@@ -107,7 +107,7 @@ export OPENAI_BASE_URL="http://127.0.0.1:8280/v1"
 export OPENAI_API_KEY="<本地密钥>"
 ```
 
-调试直连语法：`model=pv-<提供商ID>/<上游模型名>` 绕过渠道调度直发指定提供商；迁移后的旧 `ch-...` 提供商 ID 也兼容。OpenRouter 的 `org/model` 不受影响。
+强制指定渠道/提供商：在 BASE_URL 后加路径前缀，如 `http://127.0.0.1:8280/<渠道ID>`（OpenAI 客户端则是 `.../v1` 前插入，如 `http://127.0.0.1:8280/<渠道ID>/v1`）。此时 model 字段原样透传或按渠道映射处理，OpenRouter 的 `org/model` 模型名不受影响。
 
 ## 架构
 

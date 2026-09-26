@@ -35,12 +35,23 @@ type ProviderAccount struct {
 	BalanceKind string `json:"balanceKind,omitempty"`
 	BalanceURL  string `json:"balanceUrl,omitempty"`
 	BalanceKey  string `json:"balanceKey,omitempty"`
-	ProxyURL    string `json:"proxyUrl,omitempty"` // 该提供商专用 HTTP 代理，空则走系统环境代理
+	ProxyURL    string `json:"proxyUrl,omitempty"` // 该提供商专用 HTTP 代理（已废弃，UI 不再暴露；保留用于向后兼容）
+	UseProxy    bool   `json:"useProxy,omitempty"` // 勾选后走全局代理（Config.GlobalProxy）
 	Enabled     bool   `json:"enabled"`
 }
 
+// EffectiveProxyURL 该提供商实际生效的代理 URL：
+// 勾选「使用代理」且全局代理非空 → 全局代理；否则专用 ProxyURL（向后兼容）；再否则空（走系统环境）。
+func (p ProviderAccount) EffectiveProxyURL(globalProxy string) string {
+	if p.UseProxy && strings.TrimSpace(globalProxy) != "" {
+		return strings.TrimSpace(globalProxy)
+	}
+	return strings.TrimSpace(p.ProxyURL)
+}
+
 type ChannelTarget struct {
-	ProviderID    string `json:"providerId"`
+	ProviderID string `json:"providerId"`
+	// UpstreamModel 留空表示透传：把客户端请求的对外模型名原样发给上游。
 	UpstreamModel string `json:"upstreamModel"`
 	Priority      int    `json:"priority"`
 	Weight        int    `json:"weight,omitempty"`
@@ -50,8 +61,9 @@ type ChannelTarget struct {
 // Channel is the public routing surface. One channel exposes one model and can
 // fan in to any number of provider accounts.
 type Channel struct {
-	ID       string          `json:"id"`
-	Name     string          `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Model 对外模型名；留空表示通配渠道，匹配任何未被具名渠道声明的模型。
 	Model    string          `json:"model"`
 	Strategy string          `json:"strategy"`
 	Targets  []ChannelTarget `json:"targets"`
@@ -68,14 +80,15 @@ type Channel struct {
 }
 
 type Config struct {
-	ListenHost string            `json:"listenHost"`
-	ListenPort int               `json:"listenPort"`
-	LocalKey   string            `json:"localKey"`
-	RetainDays int               `json:"retainDays"`
-	Theme      string            `json:"theme,omitempty"`    // dark | light（默认 dark）
-	Language   string            `json:"language,omitempty"` // zh | en（默认 zh）
-	Providers  []ProviderAccount `json:"providers"`
-	Channels   []Channel         `json:"channels"`
+	ListenHost  string            `json:"listenHost"`
+	ListenPort  int               `json:"listenPort"`
+	LocalKey    string            `json:"localKey"`
+	RetainDays  int               `json:"retainDays"`
+	Theme       string            `json:"theme,omitempty"`    // dark | light（默认 dark）
+	Language    string            `json:"language,omitempty"` // zh | en（默认 zh）
+	GlobalProxy string            `json:"globalProxy,omitempty"` // 全局 HTTP 代理（如 http://127.0.0.1:7897），提供商勾选「使用代理」时生效
+	Providers   []ProviderAccount `json:"providers"`
+	Channels    []Channel         `json:"channels"`
 }
 
 func Default() Config {
@@ -254,24 +267,15 @@ func Validate(c Config) error {
 			return fmt.Errorf("提供商 %s 已启用但缺少 API Key", p.ID)
 		}
 	}
-	channelIDs, models := map[string]bool{}, map[string]bool{}
+	channelIDs := map[string]bool{}
 	for i, ch := range c.Channels {
-		if !strings.HasPrefix(ch.ID, "ch-") || len(ch.ID) <= 3 {
-			return fmt.Errorf("渠道 %d ID 必须以 ch- 开头且非空", i+1)
+		if strings.TrimSpace(ch.ID) == "" || strings.Contains(ch.ID, "/") {
+			return fmt.Errorf("渠道 %d ID 不能为空且不能包含 /", i+1)
 		}
 		if channelIDs[ch.ID] {
 			return fmt.Errorf("渠道 ID %q 重复", ch.ID)
 		}
 		channelIDs[ch.ID] = true
-		if strings.TrimSpace(ch.Model) == "" {
-			return fmt.Errorf("渠道 %s 缺少对外模型", ch.ID)
-		}
-		if ch.Enabled && models[ch.Model] {
-			return fmt.Errorf("对外模型 %q 被多个启用渠道重复暴露", ch.Model)
-		}
-		if ch.Enabled {
-			models[ch.Model] = true
-		}
 		if ch.Strategy != StrategyPriority && ch.Strategy != StrategyRoundRobin {
 			return fmt.Errorf("渠道 %s 调度策略无效", ch.ID)
 		}
@@ -288,9 +292,6 @@ func Validate(c Config) error {
 				return fmt.Errorf("渠道 %s 重复绑定提供商 %s", ch.ID, target.ProviderID)
 			}
 			targetIDs[target.ProviderID] = true
-			if strings.TrimSpace(target.UpstreamModel) == "" {
-				return fmt.Errorf("渠道 %s 的上游模型不能为空", ch.ID)
-			}
 			if target.Weight < 0 || target.Weight > 100 {
 				return fmt.Errorf("渠道 %s 的权重必须在 0 到 100 之间", ch.ID)
 			}
@@ -311,8 +312,8 @@ func validateLegacy(channels []Channel) error {
 		if ch.Type == "" {
 			continue
 		}
-		if !strings.HasPrefix(ch.ID, "ch-") || len(ch.ID) <= 3 {
-			return fmt.Errorf("渠道 %d ID 必须以 ch- 开头且非空", i+1)
+		if strings.TrimSpace(ch.ID) == "" || strings.Contains(ch.ID, "/") {
+			return fmt.Errorf("渠道 %d ID 不能为空且不能包含 /", i+1)
 		}
 		if seen[ch.ID] {
 			return fmt.Errorf("渠道 ID %q 重复", ch.ID)

@@ -41,9 +41,15 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header = whitelistHeaders(r)
+	direct := directTarget(r)
 
 	if req.Stream {
-		events, err := h.router.Stream(r.Context(), req, req.Model)
+		var events <-chan anthropic.Event
+		if direct != "" {
+			events, err = h.router.StreamDirect(r.Context(), req, req.Model, direct)
+		} else {
+			events, err = h.router.Stream(r.Context(), req, req.Model)
+		}
 		if err != nil {
 			h.writeUpstreamError(w, err)
 			return
@@ -52,7 +58,12 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	requestedModel := req.Model
-	resp, err := h.router.Invoke(r.Context(), req, requestedModel)
+	var resp *anthropic.Response
+	if direct != "" {
+		resp, err = h.router.InvokeDirect(r.Context(), req, requestedModel, direct)
+	} else {
+		resp, err = h.router.Invoke(r.Context(), req, requestedModel)
+	}
 	if err != nil {
 		h.writeUpstreamError(w, err)
 		return

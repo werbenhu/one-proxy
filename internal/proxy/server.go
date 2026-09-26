@@ -38,6 +38,11 @@ func NewServer(store *config.Store, registry *provider.Registry) *Server {
 	s.mux.HandleFunc("POST /v1/messages", s.handler.Messages)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.handler.ChatCompletions)
 	s.mux.HandleFunc("POST /v1/responses", s.handler.Responses)
+	// 路径前缀直连：/<渠道ID或提供商ID>/v1/... 强制走指定目标
+	s.mux.HandleFunc("GET /{target}/v1/models", s.handler.ListModels)
+	s.mux.HandleFunc("POST /{target}/v1/messages", s.handler.Messages)
+	s.mux.HandleFunc("POST /{target}/v1/chat/completions", s.handler.ChatCompletions)
+	s.mux.HandleFunc("POST /{target}/v1/responses", s.handler.Responses)
 	return s
 }
 

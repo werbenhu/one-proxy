@@ -35,7 +35,12 @@ func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targets, err := h.router.Resolve(probe.Model)
+	var targets []router.Target
+	if direct := directTarget(r); direct != "" {
+		targets, err = h.router.ResolveDirect(direct, probe.Model)
+	} else {
+		targets, err = h.router.Resolve(probe.Model)
+	}
 	if err != nil {
 		h.writeChatUpstreamError(w, err)
 		return

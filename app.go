@@ -75,32 +75,34 @@ func rebuildAdapters(cfg config.Config, registry *provider.Registry) {
 		if !p.Enabled {
 			continue
 		}
+		proxyURL := p.EffectiveProxyURL(cfg.GlobalProxy)
 		switch p.Type {
 		case config.TypeAnthropicCompat:
-			registry.Register(p.ID, anthropiccompat.New(p.BaseURL, p.APIKey, p.ProxyURL))
+			registry.Register(p.ID, anthropiccompat.New(p.BaseURL, p.APIKey, proxyURL))
 		case config.TypeOpenAICompat:
-			registry.Register(p.ID, openaicompat.New(p.BaseURL, p.APIKey, p.ProxyURL))
+			registry.Register(p.ID, openaicompat.New(p.BaseURL, p.APIKey, proxyURL))
 		case config.TypeGrok:
-			registerGrok(p, registry)
+			registerGrok(p, cfg.GlobalProxy, registry)
 		}
 	}
 }
 
 // grokOAuthExtra 当前渠道的 OAuth extra 快照（供适配器读）。
-func registerGrok(ch config.ProviderAccount, registry *provider.Registry) {
+func registerGrok(ch config.ProviderAccount, globalProxy string, registry *provider.Registry) {
+	proxyURL := ch.EffectiveProxyURL(globalProxy)
 	var extra struct {
 		Mode string `json:"mode"`
 	}
 	_ = json.Unmarshal(ch.Extra, &extra)
 	if extra.Mode == "oauth" {
-		adapter := grokadapter.NewOAuth(ch.BaseURL, ch.ProxyURL,
+		adapter := grokadapter.NewOAuth(ch.BaseURL, proxyURL,
 			func() []byte { return currentExtra(ch.ID) },
 			func(data []byte) error { return saveExtra(ch.ID, data) },
 			nil)
 		registry.Register(ch.ID, adapter)
 		return
 	}
-	registry.Register(ch.ID, grokadapter.New(ch.APIKey, ch.BaseURL, ch.ProxyURL))
+	registry.Register(ch.ID, grokadapter.New(ch.APIKey, ch.BaseURL, proxyURL))
 }
 
 // currentExtra/saveExtra 由 App 注入的配置访问器（启动时装配）。
@@ -245,7 +247,9 @@ func (a *App) GetProviderModels(id string) ([]provider.ModelInfo, error) {
 
 func (a *App) GetChannels() []service.ChannelView { return a.svc.Channels() }
 
-func (a *App) SaveChannel(ch config.Channel) error { return a.svc.SaveChannel(ch) }
+func (a *App) SaveChannel(ch config.Channel, originalID string) error {
+	return a.svc.SaveChannel(ch, originalID)
+}
 
 func (a *App) DeleteChannel(id string) error { return a.svc.DeleteChannel(id) }
 

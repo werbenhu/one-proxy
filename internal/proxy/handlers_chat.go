@@ -37,19 +37,22 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeChatError(w, http.StatusBadRequest, "invalid_request_error", "缺少 model 字段")
 		return
 	}
-	model, direct := resolveModel(probe.Model)
-	_ = direct
-
 	req, err := convert.ChatToAnthropic(body)
 	if err != nil {
 		writeChatError(w, http.StatusBadRequest, "invalid_request_error", "解析请求失败: "+err.Error())
 		return
 	}
 	req.Header = chatForwardHeaders(r)
-	req.Model = model
+	req.Model = probe.Model
+	direct := directTarget(r)
 
 	if req.Stream {
-		events, err := h.router.Stream(r.Context(), req, req.Model)
+		var events <-chan anthropic.Event
+		if direct != "" {
+			events, err = h.router.StreamDirect(r.Context(), req, req.Model, direct)
+		} else {
+			events, err = h.router.Stream(r.Context(), req, req.Model)
+		}
 		if err != nil {
 			h.writeChatUpstreamError(w, err)
 			return
@@ -57,7 +60,12 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		h.serveChatStream(w, events)
 		return
 	}
-	resp, err := h.router.Invoke(r.Context(), req, req.Model)
+	var resp *anthropic.Response
+	if direct != "" {
+		resp, err = h.router.InvokeDirect(r.Context(), req, req.Model, direct)
+	} else {
+		resp, err = h.router.Invoke(r.Context(), req, req.Model)
+	}
 	if err != nil {
 		h.writeChatUpstreamError(w, err)
 		return
