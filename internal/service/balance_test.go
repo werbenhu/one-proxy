@@ -13,6 +13,9 @@ func TestParseDeepSeekBalance(t *testing.T) {
 	if view.Summary != "12.50" || len(view.Details) != 3 {
 		t.Fatalf("unexpected balance: %+v", view)
 	}
+	if view.Details[0].LabelKey != "balance.available" || len(view.Details[0].LabelArgs) != 1 || view.Details[0].LabelArgs[0] != "CNY" {
+		t.Fatalf("unexpected label: %+v", view.Details[0])
+	}
 }
 
 func TestParseOpenRouterBalance(t *testing.T) {
@@ -22,6 +25,9 @@ func TestParseOpenRouterBalance(t *testing.T) {
 	}
 	if view.Summary != "$16.7500" || len(view.Details) != 2 {
 		t.Fatalf("unexpected credits: %+v", view)
+	}
+	if view.Details[0].LabelKey != "quota.total" || view.Details[1].LabelKey != "quota.usedAmount" {
+		t.Fatalf("unexpected labels: %+v", view.Details)
 	}
 }
 
@@ -33,6 +39,9 @@ func TestParseCodingPlan(t *testing.T) {
 	if view.Summary != "1200 / 5000" {
 		t.Fatalf("unexpected plan quota: %+v", view)
 	}
+	if view.Details[0].LabelKey != "plan.tokensLimit" || view.Details[0].ValueKey != "usedOverLimit" {
+		t.Fatalf("unexpected metric: %+v", view.Details[0])
+	}
 }
 
 func TestParseCodingPlanPercentage(t *testing.T) {
@@ -43,11 +52,22 @@ func TestParseCodingPlanPercentage(t *testing.T) {
 	if len(view.Details) != 2 {
 		t.Fatalf("unexpected details: %+v", view)
 	}
-	if view.Details[0].Label != "5 小时限额" || view.Details[0].Value != "已用 0%" || view.Details[0].Percent == nil || *view.Details[0].Percent != 0 {
+	if view.Details[0].LabelKey != "plan.timeLimit" || view.Details[0].ValueKey != "usedPercent" || view.Details[0].ValueArgs[0] != "0" || view.Details[0].Percent == nil || *view.Details[0].Percent != 0 {
 		t.Fatalf("unexpected time limit metric: %+v", view.Details[0])
 	}
-	if view.Details[1].Label != "Token 限额" || view.Details[1].Value != "337430" || view.Details[1].Percent == nil || *view.Details[1].Percent != 3 {
+	if view.Details[1].LabelKey != "plan.tokensLimit" || view.Details[1].Value != "337430" || view.Details[1].Percent == nil || *view.Details[1].Percent != 3 {
 		t.Fatalf("unexpected token limit metric: %+v", view.Details[1])
+	}
+}
+
+func TestParseCodingPlanTimeLimitTimes(t *testing.T) {
+	view, err := parseBalance("zai-coding", []byte(`{"data":{"limits":[{"type":"TIME_LIMIT","currentValue":973,"percentage":9}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := view.Details[0]
+	if m.LabelKey != "plan.timeLimit" || m.ValueKey != "usedTimes" || m.ValueArgs[0] != "973" || m.Percent == nil || *m.Percent != 9 {
+		t.Fatalf("unexpected time limit metric: %+v", m)
 	}
 }
 
@@ -60,11 +80,11 @@ func TestParseKimiCodingUsage(t *testing.T) {
 		t.Fatalf("unexpected details: %+v", view)
 	}
 	fiveHour := view.Details[0]
-	if fiveHour.Label != "5 小时窗口" || fiveHour.Percent == nil || *fiveHour.Percent != 2 {
+	if fiveHour.LabelKey != "window.5h" || fiveHour.Percent == nil || *fiveHour.Percent != 2 {
 		t.Fatalf("unexpected five-hour metric: %+v", fiveHour)
 	}
 	weekly := view.Details[1]
-	if weekly.Label != "每周额度" || weekly.Value != "120000 / 500000" || weekly.Percent == nil || *weekly.Percent != 24 {
+	if weekly.LabelKey != "period.weekly" || weekly.ValueKey != "usedOverLimit" || weekly.ValueArgs[0] != "120000" || weekly.ValueArgs[1] != "500000" || weekly.Percent == nil || *weekly.Percent != 24 {
 		t.Fatalf("unexpected weekly metric: %+v", weekly)
 	}
 }
@@ -78,10 +98,10 @@ func TestParseKimiCodingUsageDetailWrapped(t *testing.T) {
 		t.Fatalf("unexpected details: %+v", view)
 	}
 	fiveHour := view.Details[0]
-	if fiveHour.Label != "5 小时窗口" || fiveHour.Value != "1000 / 50000" || fiveHour.Percent == nil || *fiveHour.Percent != 2 {
+	if fiveHour.LabelKey != "window.5h" || fiveHour.ValueKey != "usedOverLimit" || fiveHour.ValueArgs[0] != "1000" || fiveHour.ValueArgs[1] != "50000" || fiveHour.Percent == nil || *fiveHour.Percent != 2 {
 		t.Fatalf("unexpected five-hour metric: %+v", fiveHour)
 	}
-	if view.Details[1].Label != "每周额度" || view.Details[1].Value != "120000 / 500000" {
+	if view.Details[1].LabelKey != "period.weekly" || view.Details[1].ValueArgs[0] != "120000" {
 		t.Fatalf("unexpected weekly metric: %+v", view.Details[1])
 	}
 }
@@ -93,5 +113,12 @@ func TestParseCommandCodeCredits(t *testing.T) {
 	}
 	if view.Summary != "69.5" || len(view.Details) != 5 {
 		t.Fatalf("Command Code 额度解析错误: %+v", view)
+	}
+	if view.Details[0].LabelKey != "credits.monthly" {
+		t.Fatalf("unexpected credits metric: %+v", view.Details[0])
+	}
+	fiveHour := view.Details[3]
+	if fiveHour.LabelKey != "window.5h" || fiveHour.ValueKey != "usedOverLimit" || fiveHour.ValueArgs[0] != "1.5" || fiveHour.ValueArgs[1] != "14" {
+		t.Fatalf("unexpected five-hour metric: %+v", fiveHour)
 	}
 }

@@ -26,9 +26,9 @@
           <span>{{ t('providers.accountQuota') }}</span>
           <div v-if="balances[provider.id]" class="balance-result">
             <div v-if="quotaMetrics(provider.id).length" class="quota-lines">
-              <div v-for="item in quotaMetrics(provider.id)" :key="item.label" class="quota-line">
-                <span class="quota-label">{{ shortLabel(item.label) }}</span>
-                <div class="bar"><i :class="barClass(item.percent!)" :style="{ width: item.percent + '%' }"></i><span class="bar-text">{{ item.value }}</span></div>
+              <div v-for="item in quotaMetrics(provider.id)" :key="quotaLabel(item)" class="quota-line">
+                <span class="quota-label">{{ shortLabel(quotaLabel(item)) }}</span>
+                <div class="bar"><i :class="barClass(item.percent!)" :style="{ width: item.percent + '%' }"></i><span class="bar-text">{{ quotaValue(item) }}</span></div>
                 <span class="quota-reset" :title="item.resetAt ? t('providers.resetTime') + ' ' + formatTime(item.resetAt) : ''">{{ item.resetAt ? resetText(item.resetAt) : '' }}</span>
               </div>
             </div>
@@ -126,7 +126,7 @@
 import { onMounted, ref } from 'vue'
 import { app, type BalanceView, type DeviceAuthInfo, type PresetView, type ProviderInput, type ProviderView } from '../api'
 import { confirmDialog, toast } from '../ui'
-import { t, monthDayLabel, formatNumber, formatNumberFull } from '../i18n'
+import { t, locale, monthDayLabel, formatNumber, formatNumberFull, quotaLabel, quotaValue } from '../i18n'
 import UsageDetail from '../components/UsageDetail.vue'
 
 const providers = ref<ProviderView[]>([])
@@ -241,7 +241,7 @@ async function checkBalance(id: string) {
 function quotaMetrics(id: string) {
   return (balances.value[id]?.details ?? []).filter(item => item.percent !== undefined).slice(0, 3)
 }
-function shortLabel(label: string) { return label.replace(/窗口|额度|限额/g, '') }
+function shortLabel(label: string) { return label.replace(/窗口|额度|限额|\s?quota$|\s?limit$|\s?window$/gi, '').trim() }
 function barClass(percent: number) { return percent >= 90 ? 'danger' : percent >= 70 ? 'warn' : '' }
 function isNetworkError(e: unknown): boolean {
   const msg = String(e).toLowerCase()
@@ -258,7 +258,8 @@ function formatTime(value: string) { return value ? new Date(value).toLocaleStri
 function resetText(value: string) {
   const reset = new Date(value)
   const now = new Date()
-  const time = reset.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  const tag = locale.value === 'en' ? 'en-US' : 'zh-CN'
+  const time = reset.toLocaleTimeString(tag, { hour: '2-digit', minute: '2-digit' })
   if (reset.toDateString() === now.toDateString()) return time
   const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1)
   if (reset.toDateString() === tomorrow.toDateString()) return t('providers.tomorrow') + ' ' + time

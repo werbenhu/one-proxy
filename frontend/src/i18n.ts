@@ -187,6 +187,36 @@ const dict: Record<string, { zh: string; en: string }> = {
   'usageDetail.totalTokens': { zh: '合计 token', en: 'Total tokens' },
 }
 
+// 后端配额语义词条（internal/service/balance.go 返回 labelKey/valueKey）。
+registerDict({
+  'quota.period.weekly': { zh: '每周额度', en: 'Weekly quota' },
+  'quota.period.monthly': { zh: '每月额度', en: 'Monthly quota' },
+  'quota.period.daily': { zh: '每日额度', en: 'Daily quota' },
+  'quota.period.subscription': { zh: '订阅额度', en: 'Subscription quota' },
+  'quota.window.5h': { zh: '5 小时', en: '5-hour' },
+  'quota.window.weekly': { zh: '每周', en: 'Weekly' },
+  'quota.window.generic': { zh: '窗口', en: 'Window' },
+  'quota.window.days': { zh: '{0} 天窗口', en: '{0}-day window' },
+  'quota.window.minutes': { zh: '{0} 分钟窗口', en: '{0}-minute window' },
+  'quota.plan.timeLimit': { zh: '5 小时限额', en: '5-hour limit' },
+  'quota.plan.tokensLimit': { zh: 'Token 限额', en: 'Token limit' },
+  'quota.quota.total': { zh: '总额度', en: 'Total credits' },
+  'quota.quota.usedAmount': { zh: '已使用', en: 'Used' },
+  'quota.balance.available': { zh: '{0} 可用余额', en: '{0} available' },
+  'quota.balance.toppedUp': { zh: '{0} 充值余额', en: '{0} topped up' },
+  'quota.balance.granted': { zh: '{0} 赠送余额', en: '{0} granted' },
+  'quota.balance.cash': { zh: '现金余额', en: 'Cash balance' },
+  'quota.balance.voucher': { zh: '赠送余额', en: 'Voucher balance' },
+  'quota.balance.generic': { zh: '余额', en: 'Balance' },
+  'quota.balance.remaining': { zh: '剩余额度', en: 'Remaining' },
+  'quota.credits.monthly': { zh: '月度额度', en: 'Monthly credits' },
+  'quota.credits.purchased': { zh: '购买额度', en: 'Purchased credits' },
+  'quota.credits.free': { zh: '免费额度', en: 'Free credits' },
+  'quota.value.usedPercent': { zh: '已用 {0}%', en: '{0}% used' },
+  'quota.value.usedOverLimit': { zh: '{0} / {1}', en: '{0} / {1}' },
+  'quota.value.usedTimes': { zh: '已用 {0} 次', en: '{0} used' },
+})
+
 export function t(key: string): string {
   const entry = dict[key]
   if (!entry) return key
@@ -233,4 +263,24 @@ export function formatNumber(value: number): string {
 // formatNumberFull 完整分组数字（悬浮提示等需要精确值的场景）。
 export function formatNumberFull(value: number): string {
   return new Intl.NumberFormat(locale.value === 'en' ? 'en' : 'zh-CN').format(value)
+}
+
+// tp 带参数的词条：'{0}'、'{1}' 按顺序替换。
+export function tp(key: string, ...args: (string | number)[]): string {
+  let text = t(key)
+  args.forEach((arg, i) => { text = text.replaceAll('{' + i + '}', String(arg)) })
+  return text
+}
+
+// quotaLabel 渲染后端配额标签：语义 key 走词条，raw 或未识别回退原文。
+export function quotaLabel(m: { labelKey?: string; labelArgs?: string[]; label?: string }): string {
+  const key = m.labelKey
+  if (key && key !== 'raw' && dict['quota.' + key]) return tp('quota.' + key, ...(m.labelArgs ?? []))
+  return m.labelArgs?.[0] || m.label || ''
+}
+
+// quotaValue 渲染配额数值；无语义 key 时回退后端原样文本。
+export function quotaValue(m: { valueKey?: string; valueArgs?: string[]; value?: string }): string {
+  if (m.valueKey) return tp('quota.value.' + m.valueKey, ...(m.valueArgs ?? []))
+  return m.value || ''
 }

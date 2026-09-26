@@ -105,11 +105,22 @@ export interface PresetView {
   docsUrl?: string
 }
 
+export interface BalanceMetric {
+  label?: string
+  labelKey?: string
+  labelArgs?: string[]
+  value?: string
+  valueKey?: string
+  valueArgs?: string[]
+  percent?: number
+  resetAt?: string
+}
+
 export interface BalanceView {
   supported: boolean
   kind: string
   summary: string
-  details: Array<{label: string; value: string; percent?: number; resetAt?: string}>
+  details: BalanceMetric[]
   checkedAt: string
 }
 

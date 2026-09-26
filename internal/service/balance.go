@@ -16,12 +16,22 @@ import (
 	"github.com/werbenhu/one-proxy/internal/provider"
 )
 
+// BalanceMetric 的 Label/Value 字段已不再使用：文案由前端按 LabelKey+LabelArgs、
+// ValueKey+ValueArgs 语义字段本地化渲染。未识别的原始标签放在 LabelRaw，
+// 前端在缺少语义 key 时回退显示。
 type BalanceMetric struct {
-	Label   string `json:"label"`
-	Value   string `json:"value"`
-	Percent *int   `json:"percent,omitempty"`
-	ResetAt string `json:"resetAt,omitempty"`
+	Label     string   `json:"label,omitempty"`
+	LabelKey  string   `json:"labelKey,omitempty"`
+	LabelArgs []string `json:"labelArgs,omitempty"`
+	Value     string   `json:"value,omitempty"`
+	ValueKey  string   `json:"valueKey,omitempty"`
+	ValueArgs []string `json:"valueArgs,omitempty"`
+	Percent   *int     `json:"percent,omitempty"`
+	ResetAt   string   `json:"resetAt,omitempty"`
 }
+
+// LabelRaw 兼容字段：未识别的标签原样返回给前端显示。
+const LabelRaw = "raw"
 
 type BalanceView struct {
 	Supported bool            `json:"supported"`
@@ -162,14 +172,15 @@ func (s *Service) grokBalance(p config.ProviderAccount) (BalanceView, error) {
 	if bill.Config.CreditUsagePercent != nil {
 		percent = int(*bill.Config.CreditUsagePercent + 0.5)
 	}
-	metric := BalanceMetric{Label: grokPeriodLabel(period.Type), Value: fmt.Sprintf("已用 %d%%", percent), Percent: &percent}
+	pct := strconv.Itoa(percent)
+	metric := BalanceMetric{LabelKey: grokPeriodLabel(period.Type), ValueKey: "usedPercent", ValueArgs: []string{pct}, Percent: &percent}
 	if period.End != "" {
 		if t, err := time.Parse(time.RFC3339, period.End); err == nil {
 			metric.ResetAt = t.Format(time.RFC3339)
 		}
 	}
 	return BalanceView{
-		Supported: true, Kind: "grok", Summary: metric.Value,
+		Supported: true, Kind: "grok", Summary: pct + "%",
 		Details: []BalanceMetric{metric}, CheckedAt: time.Now().Format(time.RFC3339),
 	}, nil
 }
@@ -177,13 +188,13 @@ func (s *Service) grokBalance(p config.ProviderAccount) (BalanceView, error) {
 func grokPeriodLabel(periodType string) string {
 	switch strings.ToUpper(strings.TrimPrefix(periodType, "USAGE_PERIOD_TYPE_")) {
 	case "WEEKLY":
-		return "每周额度"
+		return "period.weekly"
 	case "MONTHLY":
-		return "每月额度"
+		return "period.monthly"
 	case "DAILY":
-		return "每日额度"
+		return "period.daily"
 	default:
-		return "订阅额度"
+		return "period.subscription"
 	}
 }
 
@@ -232,22 +243,24 @@ func parseBalance(kind string, body []byte) (BalanceView, error) {
 			currency := textValue(info["currency"])
 			total := textValue(info["total_balance"])
 			if total != "" {
-				view.Details = append(view.Details, BalanceMetric{Label: currency + " 可用余额", Value: total})
+				view.Details = append(view.Details, BalanceMetric{LabelKey: "balance.available", LabelArgs: []string{currency}, Value: total})
 			}
-			appendMetric(&view, currency+" 充值余额", info["topped_up_balance"])
-			appendMetric(&view, currency+" 赠送余额", info["granted_balance"])
+			appendMetric(&view, "balance.toppedUp", []string{currency}, info["topped_up_balance"])
+			appendMetric(&view, "balance.granted", []string{currency}, info["granted_balance"])
 		}
 	case "openrouter":
 		data, _ := root["data"].(map[string]any)
 		total, used := numberValue(data["total_credits"]), numberValue(data["total_usage"])
 		if total != nil && used != nil {
 			view.Summary = "$" + strconv.FormatFloat(*total-*used, 'f', 4, 64)
-			view.Details = append(view.Details, BalanceMetric{Label: "总额度", Value: "$" + formatNumber(*total)}, BalanceMetric{Label: "已使用", Value: "$" + formatNumber(*used)})
+			view.Details = append(view.Details,
+				BalanceMetric{LabelKey: "quota.total", Value: "$" + formatNumber(*total)},
+				BalanceMetric{LabelKey: "quota.usedAmount", Value: "$" + formatNumber(*used)})
 		}
 	case "moonshot":
 		data, _ := root["data"].(map[string]any)
 		for _, key := range []string{"available_balance", "cash_balance", "voucher_balance"} {
-			appendMetric(&view, balanceLabel(key), data[key])
+			appendMetric(&view, balanceLabel(key), nil, data[key])
 		}
 	case "zai-coding", "minimax-coding":
 		data, _ := root["data"].(map[string]any)
@@ -257,27 +270,31 @@ func parseBalance(kind string, body []byte) (BalanceView, error) {
 		if dataList, ok := root["data"].([]any); ok {
 			for _, raw := range dataList {
 				item, _ := raw.(map[string]any)
+				labelKey, labelArgs := LabelRaw, []string{}
 				label := firstText(item, "name", "title")
 				if model, _ := item["model_name"].(string); model == "all" {
-					label = "每周额度"
+					labelKey = "period.weekly"
 				} else if label == "" {
-					label = model
+					label, _ = item["model_name"].(string)
 				}
-				if label == "" {
+				if label == "" && labelKey == LabelRaw {
 					label = "限额"
 				}
-				appendWindowMetric(&view, label, item)
+				if label != "" {
+					labelArgs = []string{label}
+				}
+				appendWindowMetric(&view, labelKey, labelArgs, item)
 			}
 		} else {
 			if usage, ok := root["usage"].(map[string]any); ok {
-				appendWindowMetric(&view, "每周额度", usage)
+				appendWindowMetric(&view, "period.weekly", nil, usage)
 			}
 			limits, _ := root["limits"].([]any)
 			for _, raw := range limits {
 				item, _ := raw.(map[string]any)
-				label := "窗口限额"
+				labelKey, labelArgs := LabelRaw, []string{"窗口限额"}
 				if window, ok := item["window"].(map[string]any); ok {
-					label = windowLabel(window)
+					labelKey, labelArgs = windowLabel(window)
 				}
 				detail := item
 				if d, ok := item["detail"].(map[string]any); ok {
@@ -288,36 +305,53 @@ func parseBalance(kind string, body []byte) (BalanceView, error) {
 						}
 					}
 				}
-				appendWindowMetric(&view, label, detail)
+				appendWindowMetric(&view, labelKey, labelArgs, detail)
 			}
 		}
 		// 5 小时等短窗口排在每周额度之上
 		sort.SliceStable(view.Details[startLen:], func(i, j int) bool {
-			return view.Details[startLen+i].Label != "每周额度" && view.Details[startLen+j].Label == "每周额度"
+			return view.Details[startLen+i].LabelKey != "period.weekly" && view.Details[startLen+j].LabelKey == "period.weekly"
 		})
 	case "commandcode":
 		credits, _ := root["credits"].(map[string]any)
 		windows, _ := root["windowLimits"].(map[string]any)
-		for _, pair := range []struct{ key, label string }{{"monthlyCredits", "月度额度"}, {"purchasedCredits", "购买额度"}, {"freeCredits", "免费额度"}} {
-			appendMetric(&view, pair.label, credits[pair.key])
+		for _, pair := range []struct{ key, label string }{{"monthlyCredits", "credits.monthly"}, {"purchasedCredits", "credits.purchased"}, {"freeCredits", "credits.free"}} {
+			appendMetric(&view, pair.label, nil, credits[pair.key])
 		}
-		for _, pair := range []struct{ key, label string }{{"fiveHour", "5 小时"}, {"weekly", "每周"}} {
+		for _, pair := range []struct{ key, label string }{{"fiveHour", "window.5h"}, {"weekly", "window.weekly"}} {
 			window, _ := windows[pair.key].(map[string]any)
 			used, cap := textValue(window["used"]), textValue(window["cap"])
 			if used != "" && cap != "" {
-				view.Details = append(view.Details, BalanceMetric{Label: pair.label + "已用 / 上限", Value: used + " / " + cap, ResetAt: resetTimeValue(window)})
+				view.Details = append(view.Details, BalanceMetric{
+					LabelKey: pair.label,
+					ValueKey: "usedOverLimit", ValueArgs: []string{used, cap},
+					ResetAt: resetTimeValue(window),
+				})
 			}
 		}
 	default:
 		appendPlanMetrics(&view, root)
 	}
 	if view.Summary == "" && len(view.Details) > 0 {
-		view.Summary = view.Details[0].Value
+		view.Summary = summaryText(view.Details[0])
 	}
 	if len(view.Details) == 0 {
 		return BalanceView{}, fmt.Errorf("余额接口返回成功，但响应格式无法识别")
 	}
 	return view, nil
+}
+
+// summaryText 为 summary 给一个语言中立的短文本（前端只在无 percent 明细时展示）。
+func summaryText(m BalanceMetric) string {
+	switch m.ValueKey {
+	case "usedPercent":
+		return m.ValueArgs[0] + "%"
+	case "usedOverLimit":
+		return m.ValueArgs[0] + " / " + m.ValueArgs[1]
+	case "usedTimes":
+		return m.ValueArgs[0]
+	}
+	return m.Value
 }
 
 func appendPlanMetrics(view *BalanceView, data map[string]any) {
@@ -328,47 +362,52 @@ func appendPlanMetrics(view *BalanceView, data map[string]any) {
 		}
 		for i, raw := range items {
 			item, _ := raw.(map[string]any)
-			label := firstText(item, "name", "type", "model", "resource_name")
-			if label == "" {
-				label = fmt.Sprintf("套餐 %d", i+1)
+			labelKey, labelArgs := planLabel(firstText(item, "name", "type", "model", "resource_name"))
+			if labelKey == LabelRaw && len(labelArgs) == 0 {
+				labelArgs = []string{fmt.Sprintf("套餐 %d", i+1)}
 			}
-			label = planLabel(label)
 			value := firstText(item, "remaining", "remain", "available", "left", "currentValue", "usage", "value")
 			limit := firstText(item, "limit", "total", "max", "usageLimit")
+			metric := BalanceMetric{LabelKey: labelKey, LabelArgs: labelArgs, ResetAt: resetTimeValue(item)}
 			if value != "" && limit != "" {
-				value += " / " + limit
+				metric.ValueKey = "usedOverLimit"
+				metric.ValueArgs = []string{value, limit}
+			} else {
+				metric.Value = value
 			}
-			metric := BalanceMetric{Label: label, Value: value, ResetAt: resetTimeValue(item)}
 			if pct := numberValue(item["percentage"]); pct != nil {
 				p := int(*pct + 0.5)
 				metric.Percent = &p
-				if metric.Value == "" {
-					metric.Value = fmt.Sprintf("已用 %d%%", p)
+				if metric.Value == "" && metric.ValueKey == "" {
+					metric.ValueKey = "usedPercent"
+					metric.ValueArgs = []string{strconv.Itoa(p)}
 				}
 			}
-			if itemType, _ := item["type"].(string); itemType == "TIME_LIMIT" && metric.Value != "" && !strings.HasPrefix(metric.Value, "已用") {
-				metric.Value = "已用 " + metric.Value + " 次"
+			if itemType, _ := item["type"].(string); itemType == "TIME_LIMIT" && metric.Value != "" {
+				metric.ValueKey = "usedTimes"
+				metric.ValueArgs = []string{metric.Value}
+				metric.Value = ""
 			}
-			if metric.Value == "" {
+			if metric.Value == "" && metric.ValueKey == "" {
 				continue
 			}
 			view.Details = append(view.Details, metric)
 		}
 	}
 	for _, key := range []string{"available_balance", "balance", "remaining", "remain", "total"} {
-		appendMetric(view, balanceLabel(key), data[key])
+		appendMetric(view, balanceLabel(key), nil, data[key])
 	}
 }
 
-func appendMetric(view *BalanceView, label string, value any) {
+func appendMetric(view *BalanceView, labelKey string, labelArgs []string, value any) {
 	if text := textValue(value); text != "" {
-		view.Details = append(view.Details, BalanceMetric{Label: label, Value: text})
+		view.Details = append(view.Details, BalanceMetric{LabelKey: labelKey, LabelArgs: labelArgs, Value: text})
 	}
 }
 
 // appendWindowMetric 解析 Kimi Coding 套餐的用量窗口：used / limit（数值常为字符串，
 // 也可能是 used_amount / limit_amount），used 缺失时用 limit - remaining 推算。
-func appendWindowMetric(view *BalanceView, label string, item map[string]any) {
+func appendWindowMetric(view *BalanceView, labelKey string, labelArgs []string, item map[string]any) {
 	limit := numberValue(item["limit"])
 	if limit == nil {
 		limit = numberValue(item["limit_amount"])
@@ -388,8 +427,8 @@ func appendWindowMetric(view *BalanceView, label string, item map[string]any) {
 	}
 	percent := int(*used / *limit * 100)
 	view.Details = append(view.Details, BalanceMetric{
-		Label:   label,
-		Value:   formatNumber(*used) + " / " + formatNumber(*limit),
+		LabelKey: labelKey, LabelArgs: labelArgs,
+		ValueKey: "usedOverLimit", ValueArgs: []string{formatNumber(*used), formatNumber(*limit)},
 		Percent: &percent,
 		ResetAt: resetTimeValue(item),
 	})
@@ -427,15 +466,15 @@ func epochTime(value int64) string {
 	return time.Unix(value, 0).Format(time.RFC3339)
 }
 
-// windowLabel 把 Kimi 的 window（duration + timeUnit）映射为可读标签。
-func windowLabel(window map[string]any) string {
+// windowLabel 把 Kimi 的 window（duration + timeUnit）映射为语义标签。
+func windowLabel(window map[string]any) (string, []string) {
 	duration := numberValue(window["duration"])
 	unit, _ := window["timeUnit"].(string)
 	if unit == "" {
 		unit, _ = window["time_unit"].(string)
 	}
 	if duration == nil {
-		return "窗口限额"
+		return "window.generic", nil
 	}
 	minutes := *duration
 	switch {
@@ -446,14 +485,14 @@ func windowLabel(window map[string]any) string {
 	}
 	switch int(minutes) {
 	case 300:
-		return "5 小时窗口"
+		return "window.5h", nil
 	case 10080:
-		return "每周额度"
+		return "window.weekly", nil
 	default:
 		if minutes >= 1440 && int(minutes)%1440 == 0 {
-			return fmt.Sprintf("%d 天窗口", int(minutes)/1440)
+			return "window.days", []string{strconv.Itoa(int(minutes) / 1440)}
 		}
-		return fmt.Sprintf("%d 分钟窗口", int(minutes))
+		return "window.minutes", []string{strconv.Itoa(int(minutes))}
 	}
 }
 
@@ -499,18 +538,30 @@ func numberValue(value any) *float64 {
 
 func formatNumber(value float64) string { return strconv.FormatFloat(value, 'f', -1, 64) }
 
-func planLabel(key string) string {
-	labels := map[string]string{"TIME_LIMIT": "5 小时限额", "TOKENS_LIMIT": "Token 限额"}
+// planLabel 识别已知的套餐限额类型；未识别的原文标签以 raw 形式返回（空则不携带参数）。
+func planLabel(key string) (string, []string) {
+	labels := map[string]string{"TIME_LIMIT": "plan.timeLimit", "TOKENS_LIMIT": "plan.tokensLimit"}
 	if label := labels[key]; label != "" {
-		return label
+		return label, nil
 	}
-	return key
+	if key == "" {
+		return LabelRaw, nil
+	}
+	return LabelRaw, []string{key}
 }
 
 func balanceLabel(key string) string {
-	labels := map[string]string{"available_balance": "可用余额", "cash_balance": "现金余额", "voucher_balance": "赠送余额", "balance": "余额", "remaining": "剩余额度", "remain": "剩余额度", "total": "总额度"}
+	labels := map[string]string{
+		"available_balance": "balance.available",
+		"cash_balance":      "balance.cash",
+		"voucher_balance":   "balance.voucher",
+		"balance":           "balance.generic",
+		"remaining":         "balance.remaining",
+		"remain":            "balance.remaining",
+		"total":             "quota.total",
+	}
 	if label := labels[key]; label != "" {
 		return label
 	}
-	return key
+	return LabelRaw
 }
