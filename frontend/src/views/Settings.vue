@@ -82,7 +82,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { app, type SettingsView } from '../api'
-import { applyLocale, applyTheme, t } from '../i18n'
+import { applyLocale, applyTheme, locale, t, theme } from '../i18n'
 
 const settings = ref<SettingsView>({ listenHost: '127.0.0.1', listenPort: 8280, localKey: '', retainDays: 90, theme: 'light', language: 'zh', globalProxy: '' })
 const saved = ref(false)
@@ -91,7 +91,10 @@ const showKey = ref(false)
 const copied = ref('')
 
 onMounted(async () => {
-  settings.value = await app().GetSettings()
+  const loaded = await app().GetSettings()
+  // 主题/语言以当前实际生效值为准：进入页面前可能刚在别处预览过，
+  // 后端快照里仍是未保存的旧值，不能直接覆盖。
+  settings.value = { ...loaded, theme: theme.value, language: locale.value }
 })
 
 function previewTheme(value: string) {
