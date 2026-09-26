@@ -156,19 +156,22 @@ func (a *App) initSystray() {
 	go systray.Run(func() {
 		systray.SetIcon(trayIcon)
 		systray.SetTooltip("OneProxy")
+		systray.SetOnClick(func(systray.IMenu) { a.showMainWindow() })
 		mShow := systray.AddMenuItem("打开主界面", "")
 		systray.AddSeparator()
 		mQuit := systray.AddMenuItem("退出", "")
-		mShow.Click(func() {
-			runtime.WindowShow(a.ctx)
-			runtime.WindowUnminimise(a.ctx)
-		})
+		mShow.Click(func() { a.showMainWindow() })
 		mQuit.Click(func() {
 			a.quitting.Store(true)
 			systray.Quit()
 			runtime.Quit(a.ctx)
 		})
 	}, nil)
+}
+
+func (a *App) showMainWindow() {
+	runtime.WindowShow(a.ctx)
+	runtime.WindowUnminimise(a.ctx)
 }
 
 func (a *App) shutdown(ctx context.Context) { _ = a.server.Close() }
