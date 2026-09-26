@@ -257,7 +257,13 @@ func (a *App) GetPresets() []service.PresetView { return service.Presets() }
 
 func (a *App) GetSettings() service.SettingsView { return a.svc.Settings() }
 
-func (a *App) SaveSettings(v service.SettingsView) error { return a.svc.SaveSettings(v) }
+func (a *App) SaveSettings(v service.SettingsView) error {
+	if err := a.svc.SaveSettings(v); err != nil {
+		return err
+	}
+	rebuildAdapters(a.store.Get(), a.registry)
+	return nil
+}
 
 func (a *App) GetUsageSummary(rangeKey string) ([]usage.AggRow, error) {
 	return a.svc.UsageSummary(rangeKey)

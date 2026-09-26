@@ -61,7 +61,7 @@ func (s *Service) ProviderBalance(id string) (BalanceView, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Accept", "application/json")
-	resp, err := provider.Client(p.ProxyURL).Do(req)
+	resp, err := provider.Client(p.EffectiveProxyURL(s.store.Get().GlobalProxy)).Do(req)
 	if err != nil {
 		return BalanceView{}, fmt.Errorf("查询余额: %w", err)
 	}
@@ -130,7 +130,7 @@ func (s *Service) grokBalance(p config.ProviderAccount) (BalanceView, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	resp, err := provider.Client(p.ProxyURL).Do(req)
+	resp, err := provider.Client(p.EffectiveProxyURL(s.store.Get().GlobalProxy)).Do(req)
 	if err != nil {
 		return BalanceView{}, fmt.Errorf("查询 Grok 额度: %w", err)
 	}
