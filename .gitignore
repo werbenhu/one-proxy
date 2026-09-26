@@ -21,6 +21,7 @@ one-proxy.db
 *.key
 *.p12
 *.pfx
+*.zcodeignore
 id_rsa
 id_rsa.pub
 secrets/
@@ -28,3 +29,4 @@ credentials/
 auth.json
 tokens.json
 oauth.json
+
