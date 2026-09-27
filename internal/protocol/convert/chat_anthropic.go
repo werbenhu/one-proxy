@@ -368,6 +368,8 @@ func AnthropicToChatRequest(req *anthropic.Request) ([]byte, error) {
 	}
 	if req.Stream {
 		out["stream"] = mustJSON(true)
+		// 让支持的上游在流末尾回传 usage（OpenAI/GLM/Kimi 均支持 stream_options）
+		out["stream_options"] = mustJSON(map[string]bool{"include_usage": true})
 	}
 	if req.MaxTokens > 0 {
 		out["max_tokens"] = mustJSON(req.MaxTokens)

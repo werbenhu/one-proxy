@@ -375,13 +375,14 @@ type responsesStreamBlock struct {
 // Handle 返回该事件产生的 SSE 事件（可为空）；message_stop 时聚合出
 // 带完整 output 与 usage 的 response.completed。
 type ResponsesStream struct {
-	respID  string
-	model   string
-	created bool
-	blocks  map[int]*responsesStreamBlock
-	order   []int
-	usage   anthropic.Usage
-	stop    string
+	respID      string
+	model       string
+	created     bool
+	blocks      map[int]*responsesStreamBlock
+	order       []int
+	outputCount int
+	usage       anthropic.Usage
+	stop        string
 }
 
 func NewResponsesStream() *ResponsesStream {
@@ -414,9 +415,14 @@ func (s *ResponsesStream) Handle(e anthropic.Event) []ResponsesEvent {
 			s.usage.CacheCreationInputTokens = probe.Message.Usage.CacheCreationInputTokens
 		}
 		s.created = true
-		return []ResponsesEvent{s.event("response.created", map[string]any{
-			"response": s.responseShell("in_progress", nil),
-		})}
+		return []ResponsesEvent{
+			s.event("response.created", map[string]any{
+				"response": s.responseShell("in_progress", nil),
+			}),
+			s.event("response.in_progress", map[string]any{
+				"response": s.responseShell("in_progress", nil),
+			}),
+		}
 	case "content_block_start":
 		var probe struct {
 			Index        int `json:"index"`
@@ -427,30 +433,36 @@ func (s *ResponsesStream) Handle(e anthropic.Event) []ResponsesEvent {
 			} `json:"content_block"`
 		}
 		_ = json.Unmarshal(e.Raw, &probe)
-		b := &responsesStreamBlock{outputIndex: len(s.order)}
+		b := &responsesStreamBlock{}
 		s.blocks[probe.Index] = b
-		s.order = append(s.order, probe.Index)
 		switch probe.ContentBlock.Type {
 		case "text":
 			b.kind, b.itemID = "text", randID("msg_")
+			b.outputIndex = s.outputCount
+			s.outputCount++
+			s.order = append(s.order, probe.Index)
 			return []ResponsesEvent{
 				s.event("response.output_item.added", map[string]any{
 					"output_index": b.outputIndex,
 					"item":         map[string]any{"type": "message", "id": b.itemID, "status": "in_progress", "role": "assistant", "content": []any{}},
 				}),
 				s.event("response.content_part.added", map[string]any{
-					"output_index": b.outputIndex, "content_index": 0,
+					"item_id": b.itemID, "output_index": b.outputIndex, "content_index": 0,
 					"part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}},
 				}),
 			}
 		case "tool_use":
 			b.kind, b.itemID = "tool", randID("fc_")
 			b.callID, b.name = probe.ContentBlock.ID, probe.ContentBlock.Name
+			b.outputIndex = s.outputCount
+			s.outputCount++
+			s.order = append(s.order, probe.Index)
 			return []ResponsesEvent{s.event("response.output_item.added", map[string]any{
 				"output_index": b.outputIndex,
 				"item":         map[string]any{"type": "function_call", "id": b.itemID, "call_id": b.callID, "name": b.name, "arguments": ""},
 			})}
 		default:
+			// thinking 等不产出的块：占住 canonical index 以吞掉后续 delta，但不消耗 output_index
 			b.kind = "other"
 			return nil
 		}
@@ -472,7 +484,8 @@ func (s *ResponsesStream) Handle(e anthropic.Event) []ResponsesEvent {
 		case b.kind == "text" && probe.Delta.Type == "text_delta":
 			b.text.WriteString(probe.Delta.Text)
 			return []ResponsesEvent{s.event("response.output_text.delta", map[string]any{
-				"output_index": b.outputIndex, "content_index": 0, "delta": probe.Delta.Text,
+				"item_id": b.itemID, "output_index": b.outputIndex, "content_index": 0,
+				"delta": probe.Delta.Text, "logprobs": []any{},
 			})}
 		case b.kind == "tool" && probe.Delta.Type == "input_json_delta":
 			b.args.WriteString(probe.Delta.PartialJSON)
@@ -495,10 +508,11 @@ func (s *ResponsesStream) Handle(e anthropic.Event) []ResponsesEvent {
 			full := b.text.String()
 			return []ResponsesEvent{
 				s.event("response.output_text.done", map[string]any{
-					"output_index": b.outputIndex, "content_index": 0, "text": full,
+					"item_id": b.itemID, "output_index": b.outputIndex, "content_index": 0,
+					"text": full, "logprobs": []any{},
 				}),
 				s.event("response.content_part.done", map[string]any{
-					"output_index": b.outputIndex, "content_index": 0,
+					"item_id": b.itemID, "output_index": b.outputIndex, "content_index": 0,
 					"part": map[string]any{"type": "output_text", "text": full, "annotations": []any{}},
 				}),
 				s.event("response.output_item.done", map[string]any{

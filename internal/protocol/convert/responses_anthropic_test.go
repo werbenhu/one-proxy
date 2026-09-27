@@ -187,7 +187,7 @@ func TestResponsesStream(t *testing.T) {
 		}
 	}
 	want := []string{
-		"response.created",
+		"response.created", "response.in_progress",
 		"response.output_item.added", "response.content_part.added",
 		"response.output_text.delta", "response.output_text.delta",
 		"response.output_text.done", "response.content_part.done", "response.output_item.done",
@@ -223,5 +223,57 @@ func TestResponsesStream(t *testing.T) {
 	tool := final.Response.Output[1]
 	if tool["type"] != "function_call" || tool["arguments"] != `{"city":"sz"}` {
 		t.Fatalf("completed tool 参数聚合: %v", tool)
+	}
+}
+
+// 回归：thinking 块（index 0）不应消耗 output_index；文本事件必须带 item_id。
+func TestResponsesStreamThinkingBlock(t *testing.T) {
+	events := []anthropic.Event{
+		{Type: "message_start", Raw: json.RawMessage(`{"type":"message_start","message":{"id":"msg_s","model":"glm-5.3"}}`)},
+		{Type: "content_block_start", Raw: json.RawMessage(`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`)},
+		{Type: "content_block_delta", Raw: json.RawMessage(`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}`)},
+		{Type: "content_block_stop", Raw: json.RawMessage(`{"type":"content_block_stop","index":0}`)},
+		{Type: "content_block_start", Raw: json.RawMessage(`{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`)},
+		{Type: "content_block_delta", Raw: json.RawMessage(`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"hi"}}`)},
+		{Type: "content_block_stop", Raw: json.RawMessage(`{"type":"content_block_stop","index":1}`)},
+		{Type: "message_delta", Raw: json.RawMessage(`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}`)},
+		{Type: "message_stop", Raw: json.RawMessage(`{"type":"message_stop"}`)},
+	}
+	conv := NewResponsesStream()
+	var completed json.RawMessage
+	for _, ev := range events {
+		for _, out := range conv.Handle(ev) {
+			var probe struct {
+				OutputIndex *int   `json:"output_index"`
+				ItemID      string `json:"item_id"`
+			}
+			_ = json.Unmarshal(out.Data, &probe)
+			switch out.Type {
+			case "response.output_item.added", "response.content_part.added",
+				"response.output_text.delta", "response.output_text.done",
+				"response.content_part.done", "response.output_item.done":
+				if probe.OutputIndex == nil || *probe.OutputIndex != 0 {
+					t.Fatalf("%s 的 output_index 应为 0: %s", out.Type, out.Data)
+				}
+				if out.Type != "response.output_item.added" && out.Type != "response.output_item.done" && probe.ItemID == "" {
+					t.Fatalf("%s 缺 item_id: %s", out.Type, out.Data)
+				}
+			}
+			if out.Type == "response.completed" {
+				completed = out.Data
+			}
+		}
+	}
+	var final struct {
+		Response struct {
+			Output []map[string]any `json:"output"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(completed, &final); err != nil {
+		t.Fatal(err)
+	}
+	if len(final.Response.Output) != 1 || final.Response.Output[0]["type"] != "message" {
+		data, _ := json.Marshal(final)
+		t.Fatalf("completed 应只含文本 item（thinking 丢弃）: %s", data)
 	}
 }

@@ -111,6 +111,22 @@ func accumulateChatSSE(r io.Reader, events chan<- anthropic.Event) {
 	emit := func(e anthropic.Event) { events <- e }
 	sendStart := false
 	blockOpen := false
+	pendingStop := ""
+	var outputTokens int64
+	// 延迟到流结束再发 message_delta：上游可能把 usage 放在 finish 之后的独立 chunk 里，
+	// 且 zcode 等客户端要求 usage.output_tokens 必为数字。
+	flushFinish := func() {
+		if pendingStop == "" {
+			return
+		}
+		emit(anthropic.Event{Type: "message_delta", Raw: mustJSON(map[string]any{
+			"type":  "message_delta",
+			"delta": map[string]string{"stop_reason": pendingStop},
+			"usage": map[string]any{"output_tokens": outputTokens},
+		})})
+		emit(anthropic.Event{Type: "message_stop", Raw: mustJSON(map[string]string{"type": "message_stop"})})
+		pendingStop = ""
+	}
 	send := func(data []byte) {
 		var chunk struct {
 			ID      string `json:"id"`
@@ -143,7 +159,7 @@ func accumulateChatSSE(r io.Reader, events chan<- anthropic.Event) {
 			if !sendStart && (chunk.ID != "" || len(chunk.Choices) > 0) {
 				sendStart = true
 				// OpenAI/GLM 口径：prompt_tokens 为全量输入（含 cached）；记账用互斥口径，输入侧减去缓存读。
-				usage := map[string]any{"input_tokens": 0}
+				usage := map[string]any{"input_tokens": 0, "output_tokens": 0}
 				if chunk.Usage != nil {
 					cached := int64(0)
 					if chunk.Usage.PromptDetails != nil {
@@ -201,17 +217,11 @@ func accumulateChatSSE(r io.Reader, events chan<- anthropic.Event) {
 					emit(anthropic.Event{Type: "content_block_stop", Raw: mustJSON(map[string]any{"type": "content_block_stop", "index": 0})})
 					blockOpen = false
 				}
-				usage := map[string]any{}
-				if chunk.Usage != nil {
-					usage["output_tokens"] = chunk.Usage.CompletionTokens
-				}
-				emit(anthropic.Event{Type: "message_delta", Raw: mustJSON(map[string]any{
-					"type":  "message_delta",
-					"delta": map[string]string{"stop_reason": finishToStopReason(*choice.FinishReason)},
-					"usage": usage,
-				})})
-				emit(anthropic.Event{Type: "message_stop", Raw: mustJSON(map[string]string{"type": "message_stop"})})
+				pendingStop = finishToStopReason(*choice.FinishReason)
 			}
+		}
+		if chunk.Usage != nil {
+			outputTokens = chunk.Usage.CompletionTokens
 		}
 	}
 	sc := bufio.NewScanner(r)
@@ -227,6 +237,7 @@ func accumulateChatSSE(r io.Reader, events chan<- anthropic.Event) {
 		}
 		send([]byte(payload))
 	}
+	flushFinish()
 	if err := sc.Err(); err != nil {
 		emit(anthropic.Event{Type: "error", Raw: mustJSON(map[string]any{
 			"type": "error", "error": map[string]string{"type": "api_error", "message": err.Error()},

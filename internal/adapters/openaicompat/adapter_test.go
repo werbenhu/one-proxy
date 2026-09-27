@@ -107,6 +107,100 @@ func TestStreamRebuild(t *testing.T) {
 	}
 }
 
+// 回归：上游 finish chunk 不带 usage 时，message_delta 也必须带 output_tokens（zcode 等客户端强校验）。
+func TestStreamFinishWithoutUsage(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		for _, c := range []string{
+			`data: {"id":"cmpl-1","model":"ds","choices":[{"delta":{"content":"hi"}}]}`,
+			`data: {"id":"cmpl-1","choices":[{"delta":{},"finish_reason":"stop"}]}`,
+			`data: [DONE]`,
+		} {
+			_, _ = w.Write([]byte(c + "\n\n"))
+			fl.Flush()
+		}
+	}))
+	defer up.Close()
+
+	a := New(up.URL, "k", "")
+	req := &anthropic.Request{Model: "ds", MaxTokens: 8, Stream: true,
+		Messages: json.RawMessage(`[{"role":"user","content":"hi"}]`)}
+	ch, err := a.Stream(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deltaRaw json.RawMessage
+	for ev := range ch {
+		if ev.Type == "message_delta" {
+			deltaRaw = ev.Raw
+		}
+	}
+	if deltaRaw == nil {
+		t.Fatal("缺少 message_delta 事件")
+	}
+	var probe struct {
+		Usage struct {
+			OutputTokens *int64 `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(deltaRaw, &probe); err != nil {
+		t.Fatal(err)
+	}
+	if probe.Usage.OutputTokens == nil {
+		t.Fatalf("message_delta 缺 output_tokens: %s", deltaRaw)
+	}
+}
+
+// 回归：usage 在 finish 之后的独立 chunk 里（stream_options.include_usage 风格），
+// message_delta 应等到流结束再发并带上最终 output_tokens。
+func TestStreamUsageAfterFinish(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		for _, c := range []string{
+			`data: {"id":"cmpl-1","model":"ds","choices":[{"delta":{"content":"hi"}}]}`,
+			`data: {"id":"cmpl-1","choices":[{"delta":{},"finish_reason":"stop"}]}`,
+			`data: {"id":"cmpl-1","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":6}}`,
+			`data: [DONE]`,
+		} {
+			_, _ = w.Write([]byte(c + "\n\n"))
+			fl.Flush()
+		}
+	}))
+	defer up.Close()
+
+	a := New(up.URL, "k", "")
+	req := &anthropic.Request{Model: "ds", MaxTokens: 8, Stream: true,
+		Messages: json.RawMessage(`[{"role":"user","content":"hi"}]`)}
+	ch, err := a.Stream(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deltaRaw json.RawMessage
+	deltaCount := 0
+	for ev := range ch {
+		if ev.Type == "message_delta" {
+			deltaCount++
+			deltaRaw = ev.Raw
+		}
+	}
+	if deltaCount != 1 {
+		t.Fatalf("message_delta 应恰好一次: %d", deltaCount)
+	}
+	var probe struct {
+		Usage struct {
+			OutputTokens int64 `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(deltaRaw, &probe); err != nil {
+		t.Fatal(err)
+	}
+	if probe.Usage.OutputTokens != 6 {
+		t.Fatalf("output_tokens 应为 6: %s", deltaRaw)
+	}
+}
+
 func TestErrorMapping(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
