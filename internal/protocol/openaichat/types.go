@@ -81,7 +81,8 @@ type Usage struct {
 	TotalTokens      int64 `json:"total_tokens"`
 }
 
-// Chunk SSE 流式片段。
+// Chunk SSE 流式片段。内部存顶层 Delta/Finish 便于各转换器构造;
+// 序列化时包装为标准 OpenAI choices[0] 格式。
 type Chunk struct {
 	ID      string          `json:"id,omitempty"`
 	Object  string          `json:"object,omitempty"`
@@ -90,4 +91,31 @@ type Chunk struct {
 	Delta   json.RawMessage `json:"delta"`
 	Finish  *string         `json:"finish_reason,omitempty"`
 	Usage   *Usage          `json:"usage,omitempty"`
+}
+
+// MarshalJSON 序列化为标准 OpenAI chat.completion.chunk 格式:
+// delta 和 finish_reason 包在 choices[0] 里,而不是顶层字段。
+func (c Chunk) MarshalJSON() ([]byte, error) {
+	type choiceJSON struct {
+		Index        int             `json:"index"`
+		Delta        json.RawMessage `json:"delta"`
+		FinishReason *string         `json:"finish_reason"`
+	}
+	type chunkJSON struct {
+		ID      string       `json:"id,omitempty"`
+		Object  string       `json:"object,omitempty"`
+		Created int64        `json:"created,omitempty"`
+		Model   string       `json:"model,omitempty"`
+		Choices []choiceJSON `json:"choices"`
+		Usage   *Usage       `json:"usage,omitempty"`
+	}
+	delta := c.Delta
+	if len(delta) == 0 {
+		delta = json.RawMessage(`{}`)
+	}
+	return json.Marshal(chunkJSON{
+		ID: c.ID, Object: c.Object, Created: c.Created, Model: c.Model,
+		Choices: []choiceJSON{{Index: 0, Delta: delta, FinishReason: c.Finish}},
+		Usage:   c.Usage,
+	})
 }

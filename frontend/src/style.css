@@ -53,6 +53,7 @@ body {
   text-decoration: none;
   padding: 8px 10px;
   border-radius: 6px;
+  white-space: nowrap;
 }
 
 .nav a.router-link-active { color: var(--text); background: var(--border); }
