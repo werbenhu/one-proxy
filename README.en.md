@@ -42,6 +42,15 @@ These are examples, not a guarantee that every account can use them. Check each 
 
 Download the desktop app for your system from [Releases](../../releases). Add an account under **Providers**, bind a model under **Channels**, then copy the client connection details from **Settings**.
 
+### Connect a client
+
+The client BASE_URL must include a channel ID (see the **Channels** page; ready-to-copy connection details are on the **Settings** page):
+
+- Anthropic API (Claude Code, etc.): `http://127.0.0.1:8280/<channel-id>` — the client appends `/v1/messages` itself
+- OpenAI API (Chat and Responses): `http://127.0.0.1:8280/<channel-id>/v1`
+
+Requests without a channel ID fail with HTTP 400. Use the local proxy key from **Settings** as the API key.
+
 | Platform | Download file |
 | --- | --- |
 | Windows x64 | `OneProxy-*-windows-amd64.exe` |

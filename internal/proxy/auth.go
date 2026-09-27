@@ -18,6 +18,5 @@ func checkKey(r *http.Request, key string) bool {
 	return len(got) == len(key) && subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1
 }
 
-// directTarget 取 URL 路径首段的强制路由目标（/<id>/v1/... 注册形式）；
-// 普通请求返回空串。
+// directTarget 取 URL 路径首段的路由目标（/{渠道ID}/v1/... 注册形式）。
 func directTarget(r *http.Request) string { return r.PathValue("target") }

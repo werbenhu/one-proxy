@@ -21,28 +21,13 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_api_key", "本地代理密钥校验失败")
 		return
 	}
-	if target := directTarget(r); target != "" {
-		h.listDirectModels(w, r, target)
-		return
-	}
-	seen := map[string]bool{}
-	var data []map[string]any
-	for _, ch := range h.store.Get().Channels {
-		if !ch.Enabled || strings.TrimSpace(ch.Model) == "" {
-			continue
-		}
-		if seen[ch.Model] {
-			continue
-		}
-		seen[ch.Model] = true
-		data = append(data, map[string]any{
-			"id": ch.Model, "object": "model", "created": 0, "owned_by": ch.ID,
-		})
-	}
-	if data == nil {
-		data = []map[string]any{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+	h.listDirectModels(w, r, directTarget(r))
+}
+
+// MissingChannel 无渠道 ID 的入口：引导客户端改用 /<渠道ID>/v1/... 形式。
+func (h *Handler) MissingChannel(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusBadRequest, "invalid_request_error",
+		"URL 缺少渠道 ID：请使用 /<渠道ID>"+r.URL.Path+"（如 /glm"+r.URL.Path+"）")
 }
 
 // listDirectModels 路径直连的模型列表：渠道只暴露其对外模型（通配渠道为空列表），

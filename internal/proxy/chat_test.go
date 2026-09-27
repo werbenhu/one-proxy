@@ -28,11 +28,15 @@ func TestChatEndpointToAnthropicUpstream(t *testing.T) {
 			"usage":{"input_tokens":3,"output_tokens":2}}`))
 	}))
 	defer up.Close()
-	ts, _ := newTestServer(t, []config.Channel{
-		{ID: "ch-kimi", Name: "Kimi", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
-			Models: []string{"my-model"}, ModelMapping: map[string]string{"my-model": "kimi-k3"}, Enabled: true},
-	})
-	resp, err := http.Post(ts.URL+"/v1/chat/completions", "application/json",
+	ts, _ := newTestServer(t,
+		[]config.ProviderAccount{
+			{ID: "pv-kimi", Name: "Kimi", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k", Enabled: true},
+		},
+		[]config.Channel{
+			{ID: "ch-kimi", Name: "Kimi", Model: "my-model", Strategy: config.StrategyPriority, Enabled: true,
+				Targets: []config.ChannelTarget{{ProviderID: "pv-kimi", UpstreamModel: "kimi-k3", Enabled: true}}},
+		})
+	resp, err := http.Post(ts.URL+"/ch-kimi/v1/chat/completions", "application/json",
 		strings.NewReader(`{"model":"my-model","messages":[{"role":"user","content":"hi"}]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +46,7 @@ func TestChatEndpointToAnthropicUpstream(t *testing.T) {
 	if resp.StatusCode == 200 {
 		t.Fatal("应 401")
 	}
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/chat/completions", strings.NewReader(
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-kimi/v1/chat/completions", strings.NewReader(
 		`{"model":"my-model","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp2, err := http.DefaultClient.Do(req)
@@ -94,20 +98,23 @@ func TestChatEndpointToOpenAIUpstream(t *testing.T) {
 	store := config.NewStore(dir + "/config.json")
 	cfg := config.Default()
 	cfg.LocalKey = "testkey123"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-ds", Name: "DS", Type: config.TypeOpenAICompat, BaseURL: up.URL, APIKey: "k", Enabled: true},
+	}
 	cfg.Channels = []config.Channel{
-		{ID: "ch-ds", Name: "DS", Type: config.TypeOpenAICompat, BaseURL: up.URL, APIKey: "k",
-			Models: []string{"deepseek"}, Enabled: true},
+		{ID: "ch-ds", Name: "DS", Model: "deepseek", Strategy: config.StrategyPriority, Enabled: true,
+			Targets: []config.ChannelTarget{{ProviderID: "pv-ds", Enabled: true}}},
 	}
 	if err := store.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	registry.Register("ch-ds", openaicompat.New(up.URL, "k", ""))
+	registry.Register("pv-ds", openaicompat.New(up.URL, "k", ""))
 	srv := NewServer(store, registry)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/chat/completions", strings.NewReader(
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-ds/v1/chat/completions", strings.NewReader(
 		`{"model":"deepseek","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
@@ -150,11 +157,15 @@ func TestChatStreamEndpoint(t *testing.T) {
 		}
 	}))
 	defer up.Close()
-	ts, _ := newTestServer(t, []config.Channel{
-		{ID: "ch-k", Name: "K", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
-			Models: []string{"m"}, Enabled: true},
-	})
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/chat/completions", strings.NewReader(
+	ts, _ := newTestServer(t,
+		[]config.ProviderAccount{
+			{ID: "pv-k", Name: "K", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k", Enabled: true},
+		},
+		[]config.Channel{
+			{ID: "ch-k", Name: "K", Model: "m", Strategy: config.StrategyPriority, Enabled: true,
+				Targets: []config.ChannelTarget{{ProviderID: "pv-k", Enabled: true}}},
+		})
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-k/v1/chat/completions", strings.NewReader(
 		`{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
@@ -189,20 +200,23 @@ func TestAnthropicEndpointToOpenAIUpstream(t *testing.T) {
 	store := config.NewStore(dir + "/config.json")
 	cfg := config.Default()
 	cfg.LocalKey = "testkey123"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-ds", Name: "DS", Type: config.TypeOpenAICompat, BaseURL: up.URL, APIKey: "k", Enabled: true},
+	}
 	cfg.Channels = []config.Channel{
-		{ID: "ch-ds", Name: "DS", Type: config.TypeOpenAICompat, BaseURL: up.URL, APIKey: "k",
-			Models: []string{"glm"}, Enabled: true},
+		{ID: "ch-ds", Name: "DS", Model: "glm", Strategy: config.StrategyPriority, Enabled: true,
+			Targets: []config.ChannelTarget{{ProviderID: "pv-ds", Enabled: true}}},
 	}
 	if err := store.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	registry.Register("ch-ds", openaicompat.New(up.URL, "k", ""))
+	registry.Register("pv-ds", openaicompat.New(up.URL, "k", ""))
 	srv := NewServer(store, registry)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-ds/v1/messages", strings.NewReader(
 		`{"model":"glm","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)

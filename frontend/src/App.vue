@@ -5,6 +5,7 @@
       <router-link to="/providers">{{ t('nav.providers') }}</router-link>
       <router-link to="/channels">{{ t('nav.channels') }}</router-link>
       <router-link to="/usage">{{ t('nav.usage') }}</router-link>
+      <router-link to="/clients">{{ t('nav.clients') }}</router-link>
       <router-link to="/settings">{{ t('nav.settings') }}</router-link>
     </nav>
     <main class="main">

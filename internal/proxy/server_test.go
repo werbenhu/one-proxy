@@ -22,26 +22,31 @@ import (
 	"github.com/werbenhu/one-proxy/internal/usage"
 )
 
-func newTestServer(t *testing.T, channels []config.Channel) (*httptest.Server, *config.Store) {
+func newTestServer(t *testing.T, providers []config.ProviderAccount, channels []config.Channel) (*httptest.Server, *config.Store) {
 	t.Helper()
 	dir := t.TempDir()
 	store := config.NewStore(dir + "/config.json")
 	cfg := config.Default()
 	cfg.LocalKey = "testkey123"
+	cfg.Providers = providers
 	cfg.Channels = channels
 	if err := store.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	for _, ch := range channels {
-		if !ch.Enabled {
+	for _, p := range providers {
+		if !p.Enabled {
 			continue
 		}
-		switch ch.Type {
+		switch p.Type {
 		case config.TypeAnthropicCompat:
-			registry.Register(ch.ID, anthropiccompat.New(ch.BaseURL, ch.APIKey, ""))
+			registry.Register(p.ID, anthropiccompat.New(p.BaseURL, p.APIKey, ""))
+		case config.TypeOpenAICompat:
+			registry.Register(p.ID, openaicompat.New(p.BaseURL, p.APIKey, ""))
+		case config.TypeGrok:
+			registry.Register(p.ID, grokadapter.New(p.APIKey, p.BaseURL, ""))
 		default:
-			t.Fatalf("测试不支持渠道类型: %s", ch.Type)
+			t.Fatalf("测试不支持提供商类型: %s", p.Type)
 		}
 	}
 	srv := NewServer(store, registry)
@@ -51,8 +56,9 @@ func newTestServer(t *testing.T, channels []config.Channel) (*httptest.Server, *
 }
 
 func TestAuthRejected(t *testing.T) {
-	ts, _ := newTestServer(t, nil)
-	resp, err := http.Post(ts.URL+"/v1/messages", "application/json", strings.NewReader(`{"model":"m"}`))
+	ts, _ := newTestServer(t, nil, nil)
+	// 鉴权在路由处理最前面，渠道是否存在无所谓
+	resp, err := http.Post(ts.URL+"/ch-any/v1/messages", "application/json", strings.NewReader(`{"model":"m"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,30 +66,49 @@ func TestAuthRejected(t *testing.T) {
 	if resp.StatusCode != 401 {
 		t.Fatalf("无密钥应 401, got %d", resp.StatusCode)
 	}
-	resp2, _ := http.Post(ts.URL+"/v1/messages", "application/json",
-		strings.NewReader(`{"model":"m"}`))
-	resp2.Body.Close()
-	_ = resp2
 }
 
-func TestModelsAggregation(t *testing.T) {
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer up.Close()
-	channels := []config.Channel{
-		{ID: "ch-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
-			Models: []string{"m1", "m2"}, Enabled: true},
-		{ID: "ch-b", Name: "B", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
-			Models: []string{"m2", "m3"}, Enabled: true},
-		{ID: "ch-c", Name: "C", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
-			Models: []string{"disabled"}, Enabled: false},
-	}
-	ts, _ := newTestServer(t, channels)
-	req, _ := http.NewRequest("GET", ts.URL+"/v1/models", nil)
+// 不带渠道 ID 的旧入口：返回 400 并提示 URL 缺少渠道 ID。
+func TestMissingChannelID(t *testing.T) {
+	ts, _ := newTestServer(t, nil, nil)
+	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(`{"model":"m"}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 400 {
+		t.Fatalf("缺少渠道 ID 应 400, got %d", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "渠道 ID") {
+		t.Fatalf("错误信息应提示渠道 ID: %s", body)
+	}
+}
+
+// 直连模型列表：GET /{渠道ID}/v1/models 返回该渠道的对外模型；未知 target 404。
+func TestListModelsDirect(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer up.Close()
+	ts, _ := newTestServer(t,
+		[]config.ProviderAccount{
+			{ID: "pv-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k", Enabled: true},
+		},
+		[]config.Channel{
+			{ID: "ch-a", Name: "A", Model: "m1", Strategy: config.StrategyPriority, Enabled: true,
+				Targets: []config.ChannelTarget{{ProviderID: "pv-a", Enabled: true}}},
+		})
+	get := func(path string) *http.Response {
+		req, _ := http.NewRequest("GET", ts.URL+path, nil)
+		req.Header.Set("Authorization", "Bearer testkey123")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	resp := get("/ch-a/v1/models")
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("models: %d", resp.StatusCode)
@@ -94,8 +119,13 @@ func TestModelsAggregation(t *testing.T) {
 		} `json:"data"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&out)
-	if len(out.Data) != 3 {
-		t.Fatalf("聚合去重错误: %+v", out.Data)
+	if len(out.Data) != 1 || out.Data[0].ID != "m1" {
+		t.Fatalf("渠道模型列表错误: %+v", out.Data)
+	}
+	resp2 := get("/nope/v1/models")
+	defer resp2.Body.Close()
+	if resp2.StatusCode != 404 {
+		t.Fatalf("未知 target 应 404, got %d", resp2.StatusCode)
 	}
 }
 
@@ -109,12 +139,15 @@ func TestMessagesNonStreamEndToEnd(t *testing.T) {
 			"usage":{"input_tokens":7,"output_tokens":2}}`))
 	}))
 	defer up.Close()
-	channels := []config.Channel{
-		{ID: "ch-kimi", Name: "Kimi", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "kk",
-			Models: []string{"claude-sonnet-4-6"}, ModelMapping: map[string]string{"claude-sonnet-4-6": "kimi-k3"}, Enabled: true},
-	}
-	ts, _ := newTestServer(t, channels)
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(
+	ts, _ := newTestServer(t,
+		[]config.ProviderAccount{
+			{ID: "pv-kimi", Name: "Kimi", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "kk", Enabled: true},
+		},
+		[]config.Channel{
+			{ID: "ch-kimi", Name: "Kimi", Model: "claude-sonnet-4-6", Strategy: config.StrategyPriority, Enabled: true,
+				Targets: []config.ChannelTarget{{ProviderID: "pv-kimi", UpstreamModel: "kimi-k3", Enabled: true}}},
+		})
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-kimi/v1/messages", strings.NewReader(
 		`{"model":"claude-sonnet-4-6","max_tokens":64,"system":"s","messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	req.Header.Set("anthropic-beta", "context-1m-2025-08-07")
@@ -150,12 +183,15 @@ func TestMessagesStreamEndToEnd(t *testing.T) {
 		fl.Flush()
 	}))
 	defer up.Close()
-	channels := []config.Channel{
-		{ID: "ch-kimi", Name: "Kimi", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "kk",
-			Models: []string{"m"}, Enabled: true},
-	}
-	ts, _ := newTestServer(t, channels)
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(
+	ts, _ := newTestServer(t,
+		[]config.ProviderAccount{
+			{ID: "pv-kimi", Name: "Kimi", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "kk", Enabled: true},
+		},
+		[]config.Channel{
+			{ID: "ch-kimi", Name: "Kimi", Model: "m", Strategy: config.StrategyPriority, Enabled: true,
+				Targets: []config.ChannelTarget{{ProviderID: "pv-kimi", Enabled: true}}},
+		})
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-kimi/v1/messages", strings.NewReader(
 		`{"model":"m","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("x-api-key", "testkey123")
 	resp, err := http.DefaultClient.Do(req)
@@ -188,12 +224,15 @@ func TestDirectChannelSyntax(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"m","role":"assistant","content":[],"usage":{"input_tokens":1}}`))
 	}))
 	defer up.Close()
-	channels := []config.Channel{
-		{ID: "ch-kimi", Name: "Kimi", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "kk",
-			Models: []string{"other"}, Enabled: true},
-	}
-	ts, _ := newTestServer(t, channels)
-	// 路径直连：/ch-kimi/v1/messages 强制走目标 ch-kimi，模型名原样透传
+	ts, _ := newTestServer(t,
+		[]config.ProviderAccount{
+			{ID: "pv-kimi", Name: "Kimi", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "kk", Enabled: true},
+		},
+		[]config.Channel{
+			{ID: "ch-kimi", Name: "Kimi", Model: "", Strategy: config.StrategyPriority, Enabled: true,
+				Targets: []config.ChannelTarget{{ProviderID: "pv-kimi", Enabled: true}}},
+		})
+	// 路径直连：/ch-kimi/v1/messages 强制走渠道 ch-kimi，模型名原样透传
 	req, _ := http.NewRequest("POST", ts.URL+"/ch-kimi/v1/messages", strings.NewReader(
 		`{"model":"kimi-k3","max_tokens":8,"messages":[]}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
@@ -210,23 +249,31 @@ func TestDirectChannelSyntax(t *testing.T) {
 	}
 }
 
-func TestUnknownModel(t *testing.T) {
+// 直连语义：URL 里的渠道 ID 决定路由；不存在的渠道 ID 报路由错误。
+func TestUnknownDirectTarget(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer up.Close()
-	channels := []config.Channel{
-		{ID: "ch-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
-			Models: []string{"m1"}, Enabled: true},
-	}
-	ts, _ := newTestServer(t, channels)
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(`{"model":"nope","max_tokens":8}`))
+	ts, _ := newTestServer(t,
+		[]config.ProviderAccount{
+			{ID: "pv-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k", Enabled: true},
+		},
+		[]config.Channel{
+			{ID: "ch-a", Name: "A", Model: "m1", Strategy: config.StrategyPriority, Enabled: true,
+				Targets: []config.ChannelTarget{{ProviderID: "pv-a", Enabled: true}}},
+		})
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-nope/v1/messages", strings.NewReader(`{"model":"m1","max_tokens":8}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 404 {
-		t.Fatalf("未知模型应 404, got %d", resp.StatusCode)
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 502 {
+		t.Fatalf("未知渠道应报路由错误(502), got %d: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "ch-nope") {
+		t.Fatalf("错误信息应包含渠道 ID: %s", body)
 	}
 }
 
@@ -236,12 +283,15 @@ func TestUpstreamErrorPassthrough(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"quota"}`))
 	}))
 	defer up.Close()
-	channels := []config.Channel{
-		{ID: "ch-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
-			Models: []string{"m1"}, Enabled: true},
-	}
-	ts, _ := newTestServer(t, channels)
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(`{"model":"m1","max_tokens":8}`))
+	ts, _ := newTestServer(t,
+		[]config.ProviderAccount{
+			{ID: "pv-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k", Enabled: true},
+		},
+		[]config.Channel{
+			{ID: "ch-a", Name: "A", Model: "m1", Strategy: config.StrategyPriority, Enabled: true,
+				Targets: []config.ChannelTarget{{ProviderID: "pv-a", Enabled: true}}},
+		})
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-a/v1/messages", strings.NewReader(`{"model":"m1","max_tokens":8}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -261,7 +311,7 @@ var (
 	_ anthropic.Event
 )
 
-// 端到端 failover：主渠道 429 → 自动切备渠道（同模型双渠道）。
+// 端到端 failover：主提供商 429 → 渠道内自动切备（同渠道双目标）。
 func TestEndToEndFailover(t *testing.T) {
 	var bHits int
 	upA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -275,13 +325,19 @@ func TestEndToEndFailover(t *testing.T) {
 			"content":[{"type":"text","text":"from-b"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
 	}))
 	defer upB.Close()
-	ts, _ := newTestServer(t, []config.Channel{
-		{ID: "ch-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: upA.URL, APIKey: "k",
-			Models: []string{"kimi"}, Priority: 10, Enabled: true},
-		{ID: "ch-b", Name: "B", Type: config.TypeAnthropicCompat, BaseURL: upB.URL, APIKey: "k",
-			Models: []string{"kimi"}, Priority: 5, Enabled: true},
-	})
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/messages", strings.NewReader(`{"model":"kimi","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`))
+	ts, _ := newTestServer(t,
+		[]config.ProviderAccount{
+			{ID: "pv-a", Name: "A", Type: config.TypeAnthropicCompat, BaseURL: upA.URL, APIKey: "k", Enabled: true},
+			{ID: "pv-b", Name: "B", Type: config.TypeAnthropicCompat, BaseURL: upB.URL, APIKey: "k", Enabled: true},
+		},
+		[]config.Channel{
+			{ID: "ch-kimi", Name: "Kimi", Model: "kimi", Strategy: config.StrategyPriority, Enabled: true,
+				Targets: []config.ChannelTarget{
+					{ProviderID: "pv-a", UpstreamModel: "kimi", Priority: 10, Enabled: true},
+					{ProviderID: "pv-b", UpstreamModel: "kimi", Priority: 5, Enabled: true},
+				}},
+		})
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-kimi/v1/messages", strings.NewReader(`{"model":"kimi","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -295,7 +351,7 @@ func TestEndToEndFailover(t *testing.T) {
 	var out map[string]json.RawMessage
 	_ = json.NewDecoder(resp.Body).Decode(&out)
 	if string(out["id"]) != `"msg_b"` {
-		t.Fatalf("应从 B 渠道响应: %s", out["id"])
+		t.Fatalf("应从 B 提供商响应: %s", out["id"])
 	}
 	if bHits != 1 {
 		t.Fatalf("B 命中数: %d", bHits)
@@ -314,13 +370,18 @@ func TestUsageRecording(t *testing.T) {
 	store := config.NewStore(dir + "/config.json")
 	cfg := config.Default()
 	cfg.LocalKey = "testkey123"
-	cfg.Channels = []config.Channel{{ID: "ch-u", Name: "U", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k",
-		Models: []string{"m"}, ModelMapping: map[string]string{"m": "kimi-k3"}, Enabled: true}}
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-u", Name: "U", Type: config.TypeAnthropicCompat, BaseURL: up.URL, APIKey: "k", Enabled: true},
+	}
+	cfg.Channels = []config.Channel{
+		{ID: "ch-u", Name: "U", Model: "m", Strategy: config.StrategyPriority, Enabled: true,
+			Targets: []config.ChannelTarget{{ProviderID: "pv-u", UpstreamModel: "kimi-k3", Enabled: true}}},
+	}
 	if err := store.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	registry.Register("ch-u", anthropiccompat.New(up.URL, "k", ""))
+	registry.Register("pv-u", anthropiccompat.New(up.URL, "k", ""))
 	srv := NewServer(store, registry)
 	dbPath := filepath.Join(t.TempDir(), "u2.db")
 	if err := srv.AttachUsage(dbPath, "anthropic"); err != nil {
@@ -330,7 +391,7 @@ func TestUsageRecording(t *testing.T) {
 	defer tsv.Close()
 	defer srv.CloseUsage()
 
-	req, _ := http.NewRequest("POST", tsv.URL+"/v1/messages", strings.NewReader(`{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`))
+	req, _ := http.NewRequest("POST", tsv.URL+"/ch-u/v1/messages", strings.NewReader(`{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -362,12 +423,12 @@ func TestUsageRecording(t *testing.T) {
 		t.Fatalf("token 记账: %+v", r0)
 	}
 	providerToday, err := srv.UsageStore().ProviderToday(time.Now())
-	if err != nil || providerToday["ch-u"] != 21 {
+	if err != nil || providerToday["pv-u"] != 21 {
 		t.Fatalf("提供商用量: %+v, %v", providerToday, err)
 	}
 }
 
-// /v1/responses 直通端到端：grok 渠道原样转发。
+// /v1/responses 直通端到端：grok 提供商原样转发。
 func TestResponsesEndpointDirect(t *testing.T) {
 	var hit map[string]json.RawMessage
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -384,20 +445,23 @@ func TestResponsesEndpointDirect(t *testing.T) {
 	store := config.NewStore(dir + "/config.json")
 	cfg := config.Default()
 	cfg.LocalKey = "testkey123"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-grok", Name: "Grok", Type: config.TypeGrok, BaseURL: up.URL, APIKey: "xk", Enabled: true},
+	}
 	cfg.Channels = []config.Channel{
-		{ID: "ch-grok", Name: "Grok", Type: config.TypeGrok, BaseURL: up.URL, APIKey: "xk",
-			Models: []string{"grok-4.5"}, Enabled: true},
+		{ID: "ch-grok", Name: "Grok", Model: "grok-4.5", Strategy: config.StrategyPriority, Enabled: true,
+			Targets: []config.ChannelTarget{{ProviderID: "pv-grok", Enabled: true}}},
 	}
 	if err := store.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	registry.Register("ch-grok", grokadapter.New("xk", up.URL, ""))
+	registry.Register("pv-grok", grokadapter.New("xk", up.URL, ""))
 	srv := NewServer(store, registry)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/responses", strings.NewReader(
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-grok/v1/responses", strings.NewReader(
 		`{"model":"grok-4.5","input":"hi"}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
@@ -430,15 +494,18 @@ func TestResponsesUsageRecorded(t *testing.T) {
 	store := config.NewStore(dir + "/config.json")
 	cfg := config.Default()
 	cfg.LocalKey = "testkey123"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-grok", Name: "Grok", Type: config.TypeGrok, BaseURL: up.URL, APIKey: "xk", Enabled: true},
+	}
 	cfg.Channels = []config.Channel{
-		{ID: "ch-grok", Name: "Grok", Type: config.TypeGrok, BaseURL: up.URL, APIKey: "xk",
-			Models: []string{"grok-4.5"}, Enabled: true},
+		{ID: "ch-grok", Name: "Grok", Model: "grok-4.5", Strategy: config.StrategyPriority, Enabled: true,
+			Targets: []config.ChannelTarget{{ProviderID: "pv-grok", Enabled: true}}},
 	}
 	if err := store.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	registry.Register("ch-grok", grokadapter.New("xk", up.URL, ""))
+	registry.Register("pv-grok", grokadapter.New("xk", up.URL, ""))
 	srv := NewServer(store, registry)
 	dbPath := filepath.Join(t.TempDir(), "u3.db")
 	if err := srv.AttachUsage(dbPath, "api"); err != nil {
@@ -448,7 +515,7 @@ func TestResponsesUsageRecorded(t *testing.T) {
 	defer ts.Close()
 	defer srv.CloseUsage()
 
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/responses", strings.NewReader(`{"model":"grok-4.5","input":"hi"}`))
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-grok/v1/responses", strings.NewReader(`{"model":"grok-4.5","input":"hi"}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -490,15 +557,18 @@ func TestResponsesStreamUsageRecorded(t *testing.T) {
 	store := config.NewStore(dir + "/config.json")
 	cfg := config.Default()
 	cfg.LocalKey = "testkey123"
+	cfg.Providers = []config.ProviderAccount{
+		{ID: "pv-grok", Name: "Grok", Type: config.TypeGrok, BaseURL: up.URL, APIKey: "xk", Enabled: true},
+	}
 	cfg.Channels = []config.Channel{
-		{ID: "ch-grok", Name: "Grok", Type: config.TypeGrok, BaseURL: up.URL, APIKey: "xk",
-			Models: []string{"grok-4.5"}, Enabled: true},
+		{ID: "ch-grok", Name: "Grok", Model: "grok-4.5", Strategy: config.StrategyPriority, Enabled: true,
+			Targets: []config.ChannelTarget{{ProviderID: "pv-grok", Enabled: true}}},
 	}
 	if err := store.Save(cfg); err != nil {
 		t.Fatal(err)
 	}
 	registry := provider.NewRegistry()
-	registry.Register("ch-grok", grokadapter.New("xk", up.URL, ""))
+	registry.Register("pv-grok", grokadapter.New("xk", up.URL, ""))
 	srv := NewServer(store, registry)
 	dbPath := filepath.Join(t.TempDir(), "u4.db")
 	if err := srv.AttachUsage(dbPath, "api"); err != nil {
@@ -508,7 +578,7 @@ func TestResponsesStreamUsageRecorded(t *testing.T) {
 	defer ts.Close()
 	defer srv.CloseUsage()
 
-	req, _ := http.NewRequest("POST", ts.URL+"/v1/responses", strings.NewReader(`{"model":"grok-4.5","input":"hi","stream":true}`))
+	req, _ := http.NewRequest("POST", ts.URL+"/ch-grok/v1/responses", strings.NewReader(`{"model":"grok-4.5","input":"hi","stream":true}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -579,7 +649,7 @@ func TestResponsesOpenAICompatibleFailover(t *testing.T) {
 	server := NewServer(store, registry)
 	ts := httptest.NewServer(server.Handler())
 	defer ts.Close()
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/responses", strings.NewReader(`{"model":"public","input":"hi"}`))
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/ch-public/v1/responses", strings.NewReader(`{"model":"public","input":"hi"}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -632,7 +702,7 @@ func TestResponsesConvertAnthropicUpstream(t *testing.T) {
 	ts := httptest.NewServer(server.Handler())
 	defer ts.Close()
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/responses", strings.NewReader(
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/ch-glm/v1/responses", strings.NewReader(
 		`{"model":"glm-5.3","instructions":"be brief","input":"hi"}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)
@@ -706,7 +776,7 @@ func TestResponsesConvertAnthropicStream(t *testing.T) {
 	ts := httptest.NewServer(server.Handler())
 	defer ts.Close()
 
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/responses", strings.NewReader(
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/ch-glm/v1/responses", strings.NewReader(
 		`{"model":"glm-5.3","input":"hi","stream":true}`))
 	req.Header.Set("Authorization", "Bearer testkey123")
 	resp, err := http.DefaultClient.Do(req)

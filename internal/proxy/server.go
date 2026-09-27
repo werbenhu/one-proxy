@@ -34,15 +34,16 @@ func NewServer(store *config.Store, registry *provider.Registry) *Server {
 	s := &Server{store: store, registry: registry, router: rt}
 	s.handler = &Handler{store: store, registry: registry, router: rt}
 	s.mux = http.NewServeMux()
-	s.mux.HandleFunc("GET /v1/models", s.handler.ListModels)
-	s.mux.HandleFunc("POST /v1/messages", s.handler.Messages)
-	s.mux.HandleFunc("POST /v1/chat/completions", s.handler.ChatCompletions)
-	s.mux.HandleFunc("POST /v1/responses", s.handler.Responses)
-	// 路径前缀直连：/<渠道ID或提供商ID>/v1/... 强制走指定目标
+	// 所有入口必须带渠道 ID：/{渠道ID}/v1/...
 	s.mux.HandleFunc("GET /{target}/v1/models", s.handler.ListModels)
 	s.mux.HandleFunc("POST /{target}/v1/messages", s.handler.Messages)
 	s.mux.HandleFunc("POST /{target}/v1/chat/completions", s.handler.ChatCompletions)
 	s.mux.HandleFunc("POST /{target}/v1/responses", s.handler.Responses)
+	// 无渠道 ID 的旧地址：返回引导性错误（非兼容转发）
+	s.mux.HandleFunc("GET /v1/models", s.handler.MissingChannel)
+	s.mux.HandleFunc("POST /v1/messages", s.handler.MissingChannel)
+	s.mux.HandleFunc("POST /v1/chat/completions", s.handler.MissingChannel)
+	s.mux.HandleFunc("POST /v1/responses", s.handler.MissingChannel)
 	return s
 }
 
