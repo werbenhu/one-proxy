@@ -112,18 +112,24 @@ func (c *Client) SetBaseURLs(apiURL, oauthURL string) {
 }
 
 func (c *Client) Models(ctx context.Context) (*http.Response, error) {
-	return c.do(ctx, http.MethodGet, "/models", nil, false, "")
+	return c.do(ctx, http.MethodGet, "/models", nil, false, "", nil)
 }
 
 func (c *Client) Responses(ctx context.Context, body []byte, stream bool) (*http.Response, error) {
+	return c.ResponsesWithClientHeaders(ctx, body, nil, stream)
+}
+
+// ResponsesWithClientHeaders 携带客户端身份头（User-Agent 等）转发：
+// 中转不改变来源，上游应看到真实调用方。
+func (c *Client) ResponsesWithClientHeaders(ctx context.Context, body []byte, clientHeader http.Header, stream bool) (*http.Response, error) {
 	var envelope struct {
 		Model string `json:"model"`
 	}
 	_ = json.Unmarshal(body, &envelope)
-	return c.do(ctx, http.MethodPost, "/responses", body, stream, envelope.Model)
+	return c.do(ctx, http.MethodPost, "/responses", body, stream, envelope.Model, clientHeader)
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body []byte, stream bool, model string) (*http.Response, error) {
+func (c *Client) do(ctx context.Context, method, path string, body []byte, stream bool, model string, clientHeader http.Header) (*http.Response, error) {
 	if c.credentials == nil {
 		return nil, fmt.Errorf("missing upstream credential source")
 	}
@@ -158,6 +164,13 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte, strea
 	}
 	if authorization.Mode == ModeOAuth {
 		c.applyOAuthHeaders(req, model)
+		// OAuth 网关按客户端指纹风控：保持 grok-shell 身份，仅追加真实来源备注。
+		if v := clientHeader.Get("User-Agent"); v != "" {
+			req.Header.Set("X-Client-User-Agent", v)
+		}
+	} else if v := clientHeader.Get("User-Agent"); v != "" {
+		// API Key 官方端点：透传真实调用方 UA（中转不改变来源）。
+		req.Header.Set("User-Agent", v)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

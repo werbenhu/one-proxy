@@ -15,7 +15,7 @@ func (a *Adapter) SupportedProtocols() []provider.Protocol {
 	return []provider.Protocol{provider.ProtocolResponses}
 }
 
-func (a *Adapter) ForwardRaw(ctx context.Context, protocol provider.Protocol, body []byte, _ http.Header, stream bool) (*provider.RawResult, error) {
+func (a *Adapter) ForwardRaw(ctx context.Context, protocol provider.Protocol, body []byte, header http.Header, stream bool) (*provider.RawResult, error) {
 	if protocol != provider.ProtocolResponses {
 		return nil, fmt.Errorf("OpenAI-compatible provider does not support passthrough protocol %q", protocol)
 	}
@@ -25,6 +25,7 @@ func (a *Adapter) ForwardRaw(ctx context.Context, protocol provider.Protocol, bo
 	}
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	applyRawClientHeaders(req, header)
 	if stream {
 		req.Header.Set("Accept", "text/event-stream")
 	} else {
@@ -43,4 +44,16 @@ func (a *Adapter) ForwardRaw(ctx context.Context, protocol provider.Protocol, bo
 		return nil, upstreamError(resp.StatusCode, resp.Status, data)
 	}
 	return &provider.RawResult{StatusCode: resp.StatusCode, Header: resp.Header, Body: resp.Body}, nil
+}
+
+// applyRawClientHeaders 直通路径的客户端身份头透传（与 applyClientHeaders 同一白名单）。
+func applyRawClientHeaders(httpReq *http.Request, header http.Header) {
+	if header == nil {
+		return
+	}
+	for _, h := range []string{"User-Agent", "X-Api-Source", "X-Title", "Http-X-Title"} {
+		if v := header.Get(h); v != "" {
+			httpReq.Header.Set(h, v)
+		}
+	}
 }

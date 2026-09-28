@@ -30,7 +30,8 @@ type Adapter struct {
 }
 
 // forwardedHeaders 白名单：入口请求头随请求走（plan.md §5.1 header bag）。
-var forwardedHeaders = []string{"anthropic-beta", "anthropic-version"}
+// User-Agent 属于客户端身份头：透传，让上游看到真实调用方（中转不改变来源）。
+var forwardedHeaders = []string{"anthropic-beta", "anthropic-version", "User-Agent"}
 
 const maxErrorBodyBytes = 2 << 20
 

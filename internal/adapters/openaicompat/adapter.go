@@ -33,13 +33,14 @@ type Adapter struct {
 
 const maxErrorBodyBytes = 2 << 20
 
-func (a *Adapter) buildRequest(ctx context.Context, body []byte, stream bool) (*http.Request, error) {
+func (a *Adapter) buildRequest(ctx context.Context, req *anthropic.Request, body []byte, stream bool) (*http.Request, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+a.apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
+	applyClientHeaders(httpReq, req)
 	if stream {
 		httpReq.Header.Set("Accept", "text/event-stream")
 	} else {
@@ -48,12 +49,25 @@ func (a *Adapter) buildRequest(ctx context.Context, body []byte, stream bool) (*
 	return httpReq, nil
 }
 
+// applyClientHeaders 透传 canonical header bag 里的客户端身份头（User-Agent 等，
+// 中转不改变来源）；适配器身份头（鉴权/Content-Type）不受影响。
+func applyClientHeaders(httpReq *http.Request, req *anthropic.Request) {
+	if req == nil || req.Header == nil {
+		return
+	}
+	for _, h := range []string{"User-Agent", "X-Api-Source", "X-Title", "Http-X-Title"} {
+		if v := req.Header.Get(h); v != "" {
+			httpReq.Header.Set(h, v)
+		}
+	}
+}
+
 func (a *Adapter) Invoke(ctx context.Context, req *anthropic.Request) (*anthropic.Response, error) {
 	body, err := convert.AnthropicToChatRequest(req)
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := a.buildRequest(ctx, body, false)
+	httpReq, err := a.buildRequest(ctx, req, body, false)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +95,7 @@ func (a *Adapter) Stream(ctx context.Context, req *anthropic.Request) (<-chan an
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := a.buildRequest(ctx, body, true)
+	httpReq, err := a.buildRequest(ctx, &streamReq, body, true)
 	if err != nil {
 		return nil, err
 	}

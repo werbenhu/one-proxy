@@ -94,10 +94,18 @@ func (h *Handler) serveAnthropicStream(w http.ResponseWriter, events <-chan anth
 	}
 }
 
+// forwardedClientHeaders 客户端身份头：随请求透传给上游（中转不改变来源）。
+var forwardedClientHeaders = []string{"User-Agent", "X-Api-Source", "X-Title", "Http-X-Title"}
+
 // whitelistHeaders 提取白名单头进 canonical header bag。
 func whitelistHeaders(r *http.Request) http.Header {
 	out := http.Header{}
 	for _, name := range []string{"anthropic-beta", "anthropic-version"} {
+		if v := r.Header.Get(name); v != "" {
+			out.Set(name, v)
+		}
+	}
+	for _, name := range forwardedClientHeaders {
 		if v := r.Header.Get(name); v != "" {
 			out.Set(name, v)
 		}

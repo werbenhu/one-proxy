@@ -136,9 +136,16 @@ func (h *Handler) serveChatStream(w http.ResponseWriter, events <-chan anthropic
 	}
 }
 
-// chatForwardHeaders chat 入口无 anthropic 头，透传 openai 侧可转发头（当前
-// 无白名单项，预留）。
-func chatForwardHeaders(r *http.Request) http.Header { return http.Header{} }
+// chatForwardHeaders chat 入口无 anthropic 头，透传客户端身份头（中转不改变来源）。
+func chatForwardHeaders(r *http.Request) http.Header {
+	out := http.Header{}
+	for _, name := range forwardedClientHeaders {
+		if v := r.Header.Get(name); v != "" {
+			out.Set(name, v)
+		}
+	}
+	return out
+}
 
 func (h *Handler) writeChatUpstreamError(w http.ResponseWriter, err error) {
 	var nc *router.ErrNoCandidates

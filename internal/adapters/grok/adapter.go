@@ -148,7 +148,7 @@ func (a *Adapter) ForwardRaw(ctx context.Context, protocol provider.Protocol, bo
 	if err != nil {
 		return nil, err
 	}
-	resp, err := a.client.Responses(ctx, converted, stream)
+	resp, err := a.client.ResponsesWithClientHeaders(ctx, converted, header, stream)
 	if err != nil {
 		return nil, a.normalize(err)
 	}
@@ -169,7 +169,7 @@ func (a *Adapter) Invoke(ctx context.Context, req *anthropic.Request) (*anthropi
 	if err != nil {
 		return nil, err
 	}
-	resp, err := a.client.Responses(ctx, converted, false)
+	resp, err := a.client.ResponsesWithClientHeaders(ctx, converted, req.Header, false)
 	if err != nil {
 		return nil, a.normalize(err)
 	}
@@ -195,7 +195,7 @@ func (a *Adapter) Stream(ctx context.Context, req *anthropic.Request) (<-chan an
 	if err != nil {
 		return nil, err
 	}
-	resp, err := a.client.Responses(ctx, converted, true)
+	resp, err := a.client.ResponsesWithClientHeaders(ctx, converted, req.Header, true)
 	if err != nil {
 		return nil, a.normalize(err)
 	}

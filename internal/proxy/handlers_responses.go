@@ -82,7 +82,7 @@ func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			result, callErr := raw.ForwardRaw(r.Context(), provider.ProtocolResponses, fwdBody, nil, probe.Stream)
+			result, callErr := raw.ForwardRaw(r.Context(), provider.ProtocolResponses, fwdBody, clientHeaders(r), probe.Stream)
 			if callErr != nil {
 				if !failed(t, start, callErr, &reasons) {
 					return
@@ -181,6 +181,17 @@ func supportsProtocol(a provider.RawForwardCapable, p provider.Protocol) bool {
 		}
 	}
 	return false
+}
+
+// clientHeaders 客户端身份头（直通路径转发给上游）。
+func clientHeaders(r *http.Request) http.Header {
+	out := http.Header{}
+	for _, name := range forwardedClientHeaders {
+		if v := r.Header.Get(name); v != "" {
+			out.Set(name, v)
+		}
+	}
+	return out
 }
 
 func (h *Handler) applyDirectFailure(t router.Target, err error) {
