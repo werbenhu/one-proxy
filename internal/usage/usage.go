@@ -4,6 +4,8 @@ package usage
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -36,6 +38,13 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
+	// SQLite 只建文件不建目录：首启时配置目录可能尚不存在（配置保存路径
+	// 才会 MkdirAll），这里必须自建，否则静默丢失全部记账。
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create usage database dir: %w", err)
+		}
+	}
 	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open usage database: %w", err)

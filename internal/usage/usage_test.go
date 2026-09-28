@@ -17,6 +17,25 @@ func newTestStore(t *testing.T) *Store {
 	return s
 }
 
+// 首启时序：配置目录可能尚不存在（配置保存路径才 MkdirAll），
+// Open 必须自建父目录，否则记账静默失效（今日 token 恒为 0）。
+func TestOpenCreatesMissingDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "OneProxy", "usage.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("目录不存在时应自动创建: %v", err)
+	}
+	defer s.Close()
+	if err := s.Insert(Record{CreatedAt: time.Now(), ChannelID: "ch-a", ChannelName: "A",
+		ModelRequested: "m", ModelUpstream: "m", InputTokens: 5}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.Summary(time.Time{})
+	if err != nil || len(rows) != 1 || rows[0].InputTokens != 5 {
+		t.Fatalf("建库后写入读取: rows=%+v err=%v", rows, err)
+	}
+}
+
 func TestInsertAndSummary(t *testing.T) {
 	s := newTestStore(t)
 	base := time.Now().Add(-time.Hour)

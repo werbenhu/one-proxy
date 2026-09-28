@@ -39,9 +39,11 @@ type App struct {
 	server        *proxy.Server
 	svc           *service.Service
 	configWarning string
+	usageWarning  string
 	quitting      atomic.Bool
 }
 
+// NewApp 构建 Wails 应用。configWarning / usageWarning 会在启动时以界面警告形式呈现。
 func NewApp() (*App, error) {
 	directory, err := os.UserConfigDir()
 	if err != nil {
@@ -60,12 +62,16 @@ func NewApp() (*App, error) {
 	bindExtraAccess(store)
 	rebuildAdapters(store.Get(), registry)
 	server := proxy.NewServer(store, registry)
-	if dbPath, err := config.DefaultPath("usage.db"); err == nil {
-		// 用量记账失败不阻塞启动（可无记账运行）
-		_ = server.AttachUsage(dbPath, "api")
+	usageWarning := ""
+	if dbPath, err := config.DefaultPath("usage.db"); err != nil {
+		usageWarning = fmt.Sprintf("用量记账不可用：%v", err)
+	} else if err := server.AttachUsage(dbPath, "api"); err != nil {
+		// 不阻塞启动，但必须让用户知道（否则用量统计静默全为 0）。
+		usageWarning = fmt.Sprintf("用量记账启动失败（用量统计将为 0）：%v", err)
 	}
 	svc := service.New(store, registry, server)
-	return &App{store: store, registry: registry, server: server, svc: svc, configWarning: configWarning}, nil
+	return &App{store: store, registry: registry, server: server, svc: svc,
+		configWarning: configWarning, usageWarning: usageWarning}, nil
 }
 
 // rebuildAdapters 按当前配置重建渠道适配器（配置变更后调用）。
@@ -135,6 +141,9 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if a.configWarning != "" {
 		runtime.LogWarning(ctx, a.configWarning)
+	}
+	if a.usageWarning != "" {
+		runtime.LogWarning(ctx, a.usageWarning)
 	}
 	a.initSystray()
 	go func() {
@@ -342,8 +351,10 @@ func runCLI() {
 	bindExtraAccess(store)
 	rebuildAdapters(store.Get(), registry)
 	srv := proxy.NewServer(store, registry)
-	if dbPath, err := config.DefaultPath("usage.db"); err == nil {
-		_ = srv.AttachUsage(dbPath, "api")
+	if dbPath, err := config.DefaultPath("usage.db"); err != nil {
+		log.Printf("用量记账不可用: %v", err)
+	} else if err := srv.AttachUsage(dbPath, "api"); err != nil {
+		log.Printf("用量记账启动失败（用量统计将为 0）: %v", err)
 	}
 	log.Printf("one-proxy 监听中（配置 %s）", path)
 	log.Fatal(srv.ListenAndServe())
