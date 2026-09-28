@@ -18,25 +18,26 @@ import (
 
 // ProviderView is the redacted upstream-account view.
 type ProviderView struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Vendor         string `json:"vendor"`
-	Type           string `json:"type"`
-	BaseURL        string `json:"baseUrl"`
-	APIKeyHint     string `json:"apiKeyHint"`
-	HasExtra       bool   `json:"hasExtra"`
-	AuthMode       string `json:"authMode,omitempty"` // grok：api_key | oauth
-	BalanceKind    string `json:"balanceKind"`
-	BalanceURL     string `json:"balanceUrl"`
-	BalanceKeyHint string `json:"balanceKeyHint"`
-	UseProxy       bool   `json:"useProxy"`
-	Enabled        bool   `json:"enabled"`
-	Status         string `json:"status"`
-	CoolingUntil   string `json:"coolingUntil,omitempty"`
-	FailReason     string `json:"failReason,omitempty"`
-	TodayTokens    int64  `json:"todayTokens"`
-	WeekTokens     int64  `json:"weekTokens"`
-	MonthTokens    int64  `json:"monthTokens"`
+	ID                       string `json:"id"`
+	Name                     string `json:"name"`
+	Vendor                   string `json:"vendor"`
+	Type                     string `json:"type"`
+	BaseURL                  string `json:"baseUrl"`
+	APIKeyHint               string `json:"apiKeyHint"`
+	HasExtra                 bool   `json:"hasExtra"`
+	AuthMode                 string `json:"authMode,omitempty"` // grok：api_key | oauth
+	BalanceKind              string `json:"balanceKind"`
+	BalanceURL               string `json:"balanceUrl"`
+	BalanceKeyHint           string `json:"balanceKeyHint"`
+	UseProxy                 bool   `json:"useProxy"`
+	ResponseHeaderTimeoutSec int    `json:"responseHeaderTimeoutSec"`
+	Enabled                  bool   `json:"enabled"`
+	Status                   string `json:"status"`
+	CoolingUntil             string `json:"coolingUntil,omitempty"`
+	FailReason               string `json:"failReason,omitempty"`
+	TodayTokens              int64  `json:"todayTokens"`
+	WeekTokens               int64  `json:"weekTokens"`
+	MonthTokens              int64  `json:"monthTokens"`
 }
 
 type ChannelView struct {
@@ -141,7 +142,7 @@ func (s *Service) Providers() []ProviderView {
 			ID: p.ID, Name: p.Name, Vendor: p.Vendor, Type: p.Type, BaseURL: p.BaseURL,
 			APIKeyHint: config.MaskKey(p.APIKey), HasExtra: len(p.Extra) > 0,
 			BalanceKind: p.BalanceKind, BalanceURL: p.BalanceURL, BalanceKeyHint: config.MaskKey(p.BalanceKey), Enabled: p.Enabled,
-			UseProxy:    p.UseProxy,
+			UseProxy: p.UseProxy, ResponseHeaderTimeoutSec: int(p.EffectiveResponseHeaderTimeout() / time.Second),
 			TodayTokens: today[p.ID], WeekTokens: week[p.ID], MonthTokens: month[p.ID],
 		}
 		if p.Type == config.TypeGrok {

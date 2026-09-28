@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefault(t *testing.T) {
@@ -14,6 +15,17 @@ func TestDefault(t *testing.T) {
 	}
 	if len(cfg.LocalKey) != LocalKeyLength {
 		t.Fatalf("LocalKey 长度错误: %d", len(cfg.LocalKey))
+	}
+}
+
+func TestProviderResponseHeaderTimeout(t *testing.T) {
+	p := ProviderAccount{}
+	if got := p.EffectiveResponseHeaderTimeout(); got != 300*time.Second {
+		t.Fatalf("旧配置默认超时 = %s, want 300s", got)
+	}
+	p.ResponseHeaderTimeoutSec = 420
+	if got := p.EffectiveResponseHeaderTimeout(); got != 420*time.Second {
+		t.Fatalf("自定义超时 = %s, want 420s", got)
 	}
 }
 
@@ -118,6 +130,19 @@ func TestValidateModernProviderAndChannel(t *testing.T) {
 	cfg.Channels[0].Targets[0].ProviderID = "missing"
 	if err := Validate(cfg); err == nil || !strings.Contains(err.Error(), "non-existent provider") {
 		t.Fatalf("应拒绝悬空绑定: %v", err)
+	}
+}
+
+func TestValidateProviderResponseHeaderTimeout(t *testing.T) {
+	cfg := Default()
+	cfg.Providers = []ProviderAccount{{ID: "pv-a", Name: "A", Type: TypeOpenAICompat, BaseURL: "https://example.com/v1", APIKey: "k", Enabled: true, ResponseHeaderTimeoutSec: 10}}
+	cfg.Channels = []Channel{{ID: "ch-a", Name: "A", Model: "m", Strategy: StrategyPriority, Enabled: true, Targets: []ChannelTarget{{ProviderID: "pv-a", Enabled: true}}}}
+	if err := Validate(cfg); err == nil || !strings.Contains(err.Error(), "response header timeout") {
+		t.Fatalf("应拒绝过短响应头超时: %v", err)
+	}
+	cfg.Providers[0].ResponseHeaderTimeoutSec = 300
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("应接受 300 秒响应头超时: %v", err)
 	}
 }
 

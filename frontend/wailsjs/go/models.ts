@@ -89,6 +89,7 @@ export namespace config {
 	    balanceKey?: string;
 	    proxyUrl?: string;
 	    useProxy?: boolean;
+	    responseHeaderTimeoutSec?: number;
 	    enabled: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -110,6 +111,7 @@ export namespace config {
 	        this.balanceKey = source["balanceKey"];
 	        this.proxyUrl = source["proxyUrl"];
 	        this.useProxy = source["useProxy"];
+	        this.responseHeaderTimeoutSec = source["responseHeaderTimeoutSec"];
 	        this.enabled = source["enabled"];
 	    }
 	}
@@ -364,6 +366,7 @@ export namespace service {
 	    balanceUrl: string;
 	    balanceKeyHint: string;
 	    useProxy: boolean;
+	    responseHeaderTimeoutSec: number;
 	    enabled: boolean;
 	    status: string;
 	    coolingUntil?: string;
@@ -390,6 +393,7 @@ export namespace service {
 	        this.balanceUrl = source["balanceUrl"];
 	        this.balanceKeyHint = source["balanceKeyHint"];
 	        this.useProxy = source["useProxy"];
+	        this.responseHeaderTimeoutSec = source["responseHeaderTimeoutSec"];
 	        this.enabled = source["enabled"];
 	        this.status = source["status"];
 	        this.coolingUntil = source["coolingUntil"];

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/werbenhu/one-proxy/internal/grok/auth"
 	"github.com/werbenhu/one-proxy/internal/grok/conversation"
@@ -79,9 +80,13 @@ type Adapter struct {
 
 // New apiKey 模式。baseURL 为空用官方默认（测试注入假上游）；
 // proxyURL 为该提供商专用 HTTP 代理（空走系统环境代理）。
-func New(apiKey, baseURL, proxyURL string) *Adapter {
+func New(apiKey, baseURL, proxyURL string, responseHeaderTimeout ...time.Duration) *Adapter {
 	a := &Adapter{apiKey: apiKey}
-	a.http = provider.Client(proxyURL)
+	timeout := provider.DefaultResponseHeaderTimeout
+	if len(responseHeaderTimeout) > 0 && responseHeaderTimeout[0] > 0 {
+		timeout = responseHeaderTimeout[0]
+	}
+	a.http = provider.ClientWithResponseHeaderTimeout(proxyURL, timeout)
 	a.creds = staticCredential{token: apiKey}
 	a.client = upstream.NewClient(a.http, a.creds)
 	a.client.SetBaseURLs(baseURL, baseURL)
@@ -89,9 +94,13 @@ func New(apiKey, baseURL, proxyURL string) *Adapter {
 }
 
 // NewOAuth OAuth 模式：extra 读写由回调提供（配置层注入，token 刷新落配置）。
-func NewOAuth(baseURL, proxyURL string, getExtra func() []byte, saveExtra func([]byte) error, onStatus func(error)) *Adapter {
+func NewOAuth(baseURL, proxyURL string, getExtra func() []byte, saveExtra func([]byte) error, onStatus func(error), responseHeaderTimeout ...time.Duration) *Adapter {
 	a := &Adapter{}
-	a.http = provider.Client(proxyURL)
+	timeout := provider.DefaultResponseHeaderTimeout
+	if len(responseHeaderTimeout) > 0 && responseHeaderTimeout[0] > 0 {
+		timeout = responseHeaderTimeout[0]
+	}
+	a.http = provider.ClientWithResponseHeaderTimeout(proxyURL, timeout)
 	store := &tokenStore{getExtra: getExtra, saveExtra: saveExtra}
 	a.oauthStore = store
 	source := auth.NewSource(oauthRefresher{client: a.http}, store)

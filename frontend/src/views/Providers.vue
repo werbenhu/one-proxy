@@ -78,6 +78,11 @@
           <label class="check"><input type="checkbox" v-model="form.UseProxy" />{{ t('providers.useProxy') }}</label>
           <small class="muted">{{ t('providers.useProxyHint') }}</small>
         </div>
+        <div class="field">
+          <label>{{ t('providers.responseHeaderTimeout') }}</label>
+          <input v-model.number="form.ResponseHeaderTimeoutSec" type="number" min="30" max="1800" step="30" />
+          <small class="muted">{{ t('providers.responseHeaderTimeoutHint') }}</small>
+        </div>
         <div v-if="form.Type === 'grok'" class="field">
           <label>{{ t('providers.authMode') }}</label>
           <div class="segmented grok-auth-mode">
@@ -147,7 +152,7 @@ const keyVisible = ref(false)
 const balanceKeyInput = ref('')
 const balanceKeyVisible = ref(false)
 
-function emptyForm(): ProviderInput { return { ID: '', Name: '', Vendor: '', Type: 'anthropic-compat', BaseURL: '', APIKey: '', Extra: null, AuthMode: '', BalanceKind: '', BalanceURL: '', BalanceKey: '', UseProxy: false, Enabled: true } }
+function emptyForm(): ProviderInput { return { ID: '', Name: '', Vendor: '', Type: 'anthropic-compat', BaseURL: '', APIKey: '', Extra: null, AuthMode: '', BalanceKind: '', BalanceURL: '', BalanceKey: '', UseProxy: false, ResponseHeaderTimeoutSec: 300, Enabled: true } }
 function onTypeChange() { form.value.AuthMode = form.value.Type === 'grok' ? (form.value.AuthMode || 'oauth') : '' }
 async function refresh() { providers.value = await app().GetProviders(); autoCheckBalances() }
 async function exportProviders() {
@@ -180,7 +185,7 @@ function resetKeys(apiKey: string, balanceKey: string) {
   fetchedKeys.value = null
 }
 function edit(p: ProviderView) {
-  form.value = { ID: p.id, Name: p.name, Vendor: p.vendor, Type: p.type, BaseURL: p.baseUrl, APIKey: '', Extra: null, AuthMode: p.authMode || '', BalanceKind: p.balanceKind, BalanceURL: p.balanceUrl, BalanceKey: '', UseProxy: p.useProxy, Enabled: p.enabled }
+  form.value = { ID: p.id, Name: p.name, Vendor: p.vendor, Type: p.type, BaseURL: p.baseUrl, APIKey: '', Extra: null, AuthMode: p.authMode || '', BalanceKind: p.balanceKind, BalanceURL: p.balanceUrl, BalanceKey: '', UseProxy: p.useProxy, ResponseHeaderTimeoutSec: p.responseHeaderTimeoutSec || 300, Enabled: p.enabled }
   resetKeys(p.apiKeyHint ? KEY_MASK : '', p.balanceKeyHint ? KEY_MASK : '')
   presetKey.value = ''; formError.value = ''; oauthInfo.value = null; modalOpen.value = true
 }

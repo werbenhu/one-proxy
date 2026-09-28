@@ -94,7 +94,7 @@ func NewClient(httpClient *http.Client, credentials CredentialSource) *Client {
 	if httpClient == nil {
 		transport := &http.Transport{
 			Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true, MaxIdleConns: 64, MaxIdleConnsPerHost: 32,
-			IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 60 * time.Second,
+			IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 300 * time.Second,
 		}
 		httpClient = &http.Client{Transport: transport}
 	}

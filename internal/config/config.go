@@ -11,12 +11,15 @@ import (
 )
 
 const (
-	LocalKeyLength      = 16
-	TypeAnthropicCompat = "anthropic-compat"
-	TypeOpenAICompat    = "openai-compat"
-	TypeGrok            = "grok"
-	StrategyPriority    = "priority"
-	StrategyRoundRobin  = "round-robin"
+	LocalKeyLength                  = 16
+	DefaultResponseHeaderTimeoutSec = 300
+	MinResponseHeaderTimeoutSec     = 30
+	MaxResponseHeaderTimeoutSec     = 1800
+	TypeAnthropicCompat             = "anthropic-compat"
+	TypeOpenAICompat                = "openai-compat"
+	TypeGrok                        = "grok"
+	StrategyPriority                = "priority"
+	StrategyRoundRobin              = "round-robin"
 )
 
 const localKeyAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -24,20 +27,21 @@ const localKeyAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01
 // ProviderAccount is one upstream account. Credentials and balance capability
 // belong here, never on a public channel.
 type ProviderAccount struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Vendor      string `json:"vendor,omitempty"`
-	Type        string `json:"type"`
-	BaseURL     string `json:"baseUrl"`
-	APIKey      string `json:"apiKey,omitempty"`
-	Extra       []byte `json:"extra,omitempty"`
-	AuthMode    string `json:"authMode,omitempty"` // grok 专用：api_key | oauth（保存时落入 Extra，不单独持久化）
-	BalanceKind string `json:"balanceKind,omitempty"`
-	BalanceURL  string `json:"balanceUrl,omitempty"`
-	BalanceKey  string `json:"balanceKey,omitempty"`
-	ProxyURL    string `json:"proxyUrl,omitempty"` // 该提供商专用 HTTP 代理（已废弃，UI 不再暴露；保留用于向后兼容）
-	UseProxy    bool   `json:"useProxy,omitempty"` // 勾选后走全局代理（Config.GlobalProxy）
-	Enabled     bool   `json:"enabled"`
+	ID                       string `json:"id"`
+	Name                     string `json:"name"`
+	Vendor                   string `json:"vendor,omitempty"`
+	Type                     string `json:"type"`
+	BaseURL                  string `json:"baseUrl"`
+	APIKey                   string `json:"apiKey,omitempty"`
+	Extra                    []byte `json:"extra,omitempty"`
+	AuthMode                 string `json:"authMode,omitempty"` // grok 专用：api_key | oauth（保存时落入 Extra，不单独持久化）
+	BalanceKind              string `json:"balanceKind,omitempty"`
+	BalanceURL               string `json:"balanceUrl,omitempty"`
+	BalanceKey               string `json:"balanceKey,omitempty"`
+	ProxyURL                 string `json:"proxyUrl,omitempty"`                 // 该提供商专用 HTTP 代理（已废弃，UI 不再暴露；保留用于向后兼容）
+	UseProxy                 bool   `json:"useProxy,omitempty"`                 // 勾选后走全局代理（Config.GlobalProxy）
+	ResponseHeaderTimeoutSec int    `json:"responseHeaderTimeoutSec,omitempty"` // 等待上游响应头；0 使用默认值
+	Enabled                  bool   `json:"enabled"`
 }
 
 // EffectiveProxyURL 该提供商实际生效的代理 URL：
@@ -47,6 +51,16 @@ func (p ProviderAccount) EffectiveProxyURL(globalProxy string) string {
 		return strings.TrimSpace(globalProxy)
 	}
 	return strings.TrimSpace(p.ProxyURL)
+}
+
+// EffectiveResponseHeaderTimeout 返回提供商实际使用的响应头等待时长。
+// 0 是旧配置和未配置值，兼容地升级到适合 LLM 长请求的默认 300 秒。
+func (p ProviderAccount) EffectiveResponseHeaderTimeout() time.Duration {
+	seconds := p.ResponseHeaderTimeoutSec
+	if seconds <= 0 {
+		seconds = DefaultResponseHeaderTimeoutSec
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 type ChannelTarget struct {
@@ -265,6 +279,9 @@ func Validate(c Config) error {
 		}
 		if p.Enabled && p.Type != TypeGrok && strings.TrimSpace(p.APIKey) == "" {
 			return fmt.Errorf("provider %s is enabled but missing API key", p.ID)
+		}
+		if p.ResponseHeaderTimeoutSec != 0 && (p.ResponseHeaderTimeoutSec < MinResponseHeaderTimeoutSec || p.ResponseHeaderTimeoutSec > MaxResponseHeaderTimeoutSec) {
+			return fmt.Errorf("provider %s response header timeout must be 0 or between %d and %d seconds", p.ID, MinResponseHeaderTimeoutSec, MaxResponseHeaderTimeoutSec)
 		}
 	}
 	channelIDs := map[string]bool{}

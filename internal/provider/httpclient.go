@@ -6,9 +6,22 @@ import (
 	"time"
 )
 
+// DefaultResponseHeaderTimeout 给大模型上游留出足够的排队和首 token 时间。
+// 旧值 60 秒会把仍在正常推理的长上下文请求误判为网络故障。
+const DefaultResponseHeaderTimeout = 300 * time.Second
+
 // Transport 构造出站 Transport：proxyURL 非空且合法时走该代理（http/https/socks5），
 // 否则回退到环境变量代理。供各上游适配器与余额查询共用。
 func Transport(proxyURL string) *http.Transport {
+	return TransportWithResponseHeaderTimeout(proxyURL, DefaultResponseHeaderTimeout)
+}
+
+// TransportWithResponseHeaderTimeout 与 Transport 相同，但允许提供商覆盖等待响应头的时长。
+// 非正值回退到适合 LLM 请求的默认值。
+func TransportWithResponseHeaderTimeout(proxyURL string, responseHeaderTimeout time.Duration) *http.Transport {
+	if responseHeaderTimeout <= 0 {
+		responseHeaderTimeout = DefaultResponseHeaderTimeout
+	}
 	t := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		ForceAttemptHTTP2:     true,
@@ -16,7 +29,7 @@ func Transport(proxyURL string) *http.Transport {
 		MaxIdleConnsPerHost:   32,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout,
 	}
 	if u, err := url.Parse(proxyURL); err == nil && u.Scheme != "" && u.Host != "" {
 		t.Proxy = http.ProxyURL(u)
@@ -27,4 +40,9 @@ func Transport(proxyURL string) *http.Transport {
 // Client 返回使用指定代理的 HTTP 客户端（proxyURL 语义同 Transport）。
 func Client(proxyURL string) *http.Client {
 	return &http.Client{Transport: Transport(proxyURL)}
+}
+
+// ClientWithResponseHeaderTimeout 创建带可配置响应头超时的客户端。
+func ClientWithResponseHeaderTimeout(proxyURL string, responseHeaderTimeout time.Duration) *http.Client {
+	return &http.Client{Transport: TransportWithResponseHeaderTimeout(proxyURL, responseHeaderTimeout)}
 }

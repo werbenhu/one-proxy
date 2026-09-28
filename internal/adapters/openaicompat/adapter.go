@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/werbenhu/one-proxy/internal/protocol/anthropic"
 	"github.com/werbenhu/one-proxy/internal/protocol/convert"
@@ -17,11 +18,15 @@ import (
 )
 
 // New 工厂：proxyURL 为该提供商专用 HTTP 代理（空走系统环境代理）。
-func New(baseURL, apiKey, proxyURL string) *Adapter {
+func New(baseURL, apiKey, proxyURL string, responseHeaderTimeout ...time.Duration) *Adapter {
+	timeout := provider.DefaultResponseHeaderTimeout
+	if len(responseHeaderTimeout) > 0 && responseHeaderTimeout[0] > 0 {
+		timeout = responseHeaderTimeout[0]
+	}
 	return &Adapter{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
-		http:    &http.Client{Transport: provider.Transport(proxyURL)},
+		http:    &http.Client{Transport: provider.TransportWithResponseHeaderTimeout(proxyURL, timeout)},
 	}
 }
 
@@ -170,24 +175,24 @@ func accumulateChatSSE(r io.Reader, events chan<- anthropic.Event) {
 		if json.Unmarshal(data, &chunk) != nil {
 			return
 		}
-			if !sendStart && (chunk.ID != "" || len(chunk.Choices) > 0) {
-				sendStart = true
-				// OpenAI/GLM 口径：prompt_tokens 为全量输入（含 cached）；记账用互斥口径，输入侧减去缓存读。
-				usage := map[string]any{"input_tokens": 0, "output_tokens": 0}
-				if chunk.Usage != nil {
-					cached := int64(0)
-					if chunk.Usage.PromptDetails != nil {
-						cached = chunk.Usage.PromptDetails.CachedTokens
-					}
-					input := chunk.Usage.PromptTokens - cached
-					if input < 0 {
-						input = 0
-					}
-					usage["input_tokens"] = input
-					if cached > 0 {
-						usage["cache_read_input_tokens"] = cached
-					}
+		if !sendStart && (chunk.ID != "" || len(chunk.Choices) > 0) {
+			sendStart = true
+			// OpenAI/GLM 口径：prompt_tokens 为全量输入（含 cached）；记账用互斥口径，输入侧减去缓存读。
+			usage := map[string]any{"input_tokens": 0, "output_tokens": 0}
+			if chunk.Usage != nil {
+				cached := int64(0)
+				if chunk.Usage.PromptDetails != nil {
+					cached = chunk.Usage.PromptDetails.CachedTokens
 				}
+				input := chunk.Usage.PromptTokens - cached
+				if input < 0 {
+					input = 0
+				}
+				usage["input_tokens"] = input
+				if cached > 0 {
+					usage["cache_read_input_tokens"] = cached
+				}
+			}
 			emit(anthropic.Event{Type: "message_start", Raw: mustJSON(map[string]any{
 				"type": "message_start",
 				"message": map[string]any{

@@ -82,11 +82,12 @@ func rebuildAdapters(cfg config.Config, registry *provider.Registry) {
 			continue
 		}
 		proxyURL := p.EffectiveProxyURL(cfg.GlobalProxy)
+		responseHeaderTimeout := p.EffectiveResponseHeaderTimeout()
 		switch p.Type {
 		case config.TypeAnthropicCompat:
-			registry.Register(p.ID, anthropiccompat.New(p.BaseURL, p.APIKey, proxyURL))
+			registry.Register(p.ID, anthropiccompat.New(p.BaseURL, p.APIKey, proxyURL, responseHeaderTimeout))
 		case config.TypeOpenAICompat:
-			registry.Register(p.ID, openaicompat.New(p.BaseURL, p.APIKey, proxyURL))
+			registry.Register(p.ID, openaicompat.New(p.BaseURL, p.APIKey, proxyURL, responseHeaderTimeout))
 		case config.TypeGrok:
 			registerGrok(p, cfg.GlobalProxy, registry)
 		}
@@ -96,6 +97,7 @@ func rebuildAdapters(cfg config.Config, registry *provider.Registry) {
 // grokOAuthExtra 当前渠道的 OAuth extra 快照（供适配器读）。
 func registerGrok(ch config.ProviderAccount, globalProxy string, registry *provider.Registry) {
 	proxyURL := ch.EffectiveProxyURL(globalProxy)
+	responseHeaderTimeout := ch.EffectiveResponseHeaderTimeout()
 	var extra struct {
 		Mode string `json:"mode"`
 	}
@@ -104,11 +106,11 @@ func registerGrok(ch config.ProviderAccount, globalProxy string, registry *provi
 		adapter := grokadapter.NewOAuth(ch.BaseURL, proxyURL,
 			func() []byte { return currentExtra(ch.ID) },
 			func(data []byte) error { return saveExtra(ch.ID, data) },
-			nil)
+			nil, responseHeaderTimeout)
 		registry.Register(ch.ID, adapter)
 		return
 	}
-	registry.Register(ch.ID, grokadapter.New(ch.APIKey, ch.BaseURL, proxyURL))
+	registry.Register(ch.ID, grokadapter.New(ch.APIKey, ch.BaseURL, proxyURL, responseHeaderTimeout))
 }
 
 // currentExtra/saveExtra 由 App 注入的配置访问器（启动时装配）。

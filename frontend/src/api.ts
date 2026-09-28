@@ -11,6 +11,7 @@ export interface ProviderView {
   balanceUrl: string
   balanceKeyHint: string
   useProxy: boolean
+  responseHeaderTimeoutSec: number
   enabled: boolean
   status: string
   coolingUntil?: string
@@ -67,6 +68,7 @@ export interface ProviderInput {
   BalanceURL: string
   BalanceKey: string
   UseProxy: boolean
+  ResponseHeaderTimeoutSec: number
   Enabled: boolean
 }
 

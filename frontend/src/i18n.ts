@@ -79,6 +79,8 @@ const dict: Record<string, { zh: string; en: string }> = {
   'providers.baseUrlPlaceholder': { zh: '留空使用官方端点', en: 'Leave blank to use the official endpoint' },
   'providers.useProxy': { zh: '使用代理', en: 'Use proxy' },
   'providers.useProxyHint': { zh: '勾选后该提供商的请求（含授权、token 刷新、额度查询）走设置页配置的全局代理。', en: 'When enabled, this provider\'s requests (including auth, token refresh, and quota checks) go through the global proxy configured in Settings.' },
+  'providers.responseHeaderTimeout': { zh: '等待上游响应（秒）', en: 'Upstream response timeout (seconds)' },
+  'providers.responseHeaderTimeoutHint': { zh: '等待上游返回响应头或首个流式数据的最长时间；长上下文模型建议 300 秒。', en: 'Maximum wait for upstream response headers or the first streamed data; 300 seconds is recommended for long-context models.' },
   'providers.proxyHintOnError': { zh: '提示：这看起来是网络连接问题。如果该上游在国内无法直连，请勾选「使用代理」并在设置页配置全局代理后重试。', en: 'Hint: this looks like a network issue. If the upstream is unreachable from your network, enable "Use proxy" and configure the global proxy in Settings, then retry.' },
   'providers.authMode': { zh: '授权方式', en: 'Authorization method' },
   'providers.webAuth': { zh: '网页授权', en: 'Web authorization' },

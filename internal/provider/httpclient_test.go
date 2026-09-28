@@ -3,7 +3,25 @@ package provider
 import (
 	"net/http"
 	"testing"
+	"time"
 )
+
+func TestTransportUsesLLMFriendlyDefaultTimeout(t *testing.T) {
+	if DefaultResponseHeaderTimeout != 300*time.Second {
+		t.Fatalf("默认常量 = %s, want 300s", DefaultResponseHeaderTimeout)
+	}
+	tr := Transport("")
+	if tr.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
+		t.Fatalf("默认响应头超时 = %s, want 300s", tr.ResponseHeaderTimeout)
+	}
+}
+
+func TestTransportUsesConfiguredResponseHeaderTimeout(t *testing.T) {
+	tr := TransportWithResponseHeaderTimeout("", 7*time.Minute)
+	if tr.ResponseHeaderTimeout != 7*time.Minute {
+		t.Fatalf("自定义响应头超时 = %s, want 7m", tr.ResponseHeaderTimeout)
+	}
+}
 
 func TestTransportUsesProxyURL(t *testing.T) {
 	tr := Transport("http://127.0.0.1:7890")

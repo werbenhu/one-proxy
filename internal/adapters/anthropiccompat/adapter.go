@@ -9,17 +9,22 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/werbenhu/one-proxy/internal/protocol/anthropic"
 	"github.com/werbenhu/one-proxy/internal/provider"
 )
 
 // New 工厂：由 service 按渠道配置构造；proxyURL 为该提供商专用 HTTP 代理（空走系统环境代理）。
-func New(baseURL, apiKey, proxyURL string) *Adapter {
+func New(baseURL, apiKey, proxyURL string, responseHeaderTimeout ...time.Duration) *Adapter {
+	timeout := provider.DefaultResponseHeaderTimeout
+	if len(responseHeaderTimeout) > 0 && responseHeaderTimeout[0] > 0 {
+		timeout = responseHeaderTimeout[0]
+	}
 	return &Adapter{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
-		http:    &http.Client{Transport: provider.Transport(proxyURL)},
+		http:    &http.Client{Transport: provider.TransportWithResponseHeaderTimeout(proxyURL, timeout)},
 	}
 }
 
