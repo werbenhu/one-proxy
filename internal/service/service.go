@@ -392,10 +392,17 @@ func (s *Service) Settings() SettingsView {
 }
 
 func (s *Service) SaveSettings(v SettingsView) error {
+	globalProxy := strings.TrimSpace(v.GlobalProxy)
+	if normalized := provider.NormalizeProxyURL(globalProxy); normalized != globalProxy {
+		// 可修复的拼写偏差（如 http:127.0.0.1:7897 → http://127.0.0.1:7897）直接规范保存
+		globalProxy = normalized
+	} else if globalProxy != "" && !provider.ValidProxyURL(globalProxy) {
+		return fmt.Errorf("invalid global proxy %q: expected http://host:port or socks5://host:port", globalProxy)
+	}
 	return s.store.Update(func(c *config.Config) {
 		c.ListenHost, c.ListenPort = v.ListenHost, v.ListenPort
 		c.LocalKey, c.RetainDays = v.LocalKey, v.RetainDays
-		c.GlobalProxy = strings.TrimSpace(v.GlobalProxy)
+		c.GlobalProxy = globalProxy
 		switch v.Theme {
 		case "dark", "light":
 			c.Theme = v.Theme
