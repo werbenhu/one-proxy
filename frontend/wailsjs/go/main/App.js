@@ -66,6 +66,10 @@ export function ImportProviders() {
   return window['go']['main']['App']['ImportProviders']();
 }
 
+export function Ping() {
+  return window['go']['main']['App']['Ping']();
+}
+
 export function ReorderProviders(arg1) {
   return window['go']['main']['App']['ReorderProviders'](arg1);
 }

@@ -189,6 +189,9 @@ func (a *App) shutdown(ctx context.Context) { _ = a.server.Close() }
 
 // ===== Wails bindings（前端调用）=====
 
+// Ping 心跳探活（前端 WebView2 冻结自愈用）：能返回即代表绑定通道正常。
+func (a *App) Ping() {}
+
 func (a *App) GetProviders() []service.ProviderView { return a.svc.Providers() }
 
 func (a *App) GetProviderKeys(id string) (service.ProviderKeysView, error) {

@@ -43,6 +43,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { app, type AggRow, type ModelDayTokens, type ModelHourTokens } from '../api'
 import { t, formatNumber } from '../i18n'
+import { toast } from '../ui'
 import TrendChart from '../components/TrendChart.vue'
 
 const rows = ref<AggRow[]>([])
@@ -51,14 +52,21 @@ const hourly = ref<ModelHourTokens[]>([])
 const rangeKey = ref('today')
 
 async function refresh() {
-  const [summary, trend, trendHourly] = await Promise.all([
-    app().GetUsageSummary(rangeKey.value),
-    app().GetUsageDaily(rangeKey.value),
-    app().GetUsageHourlyToday(),
-  ])
-  rows.value = summary
-  daily.value = trend
-  hourly.value = trendHourly
+  try {
+    const [summary, trend, trendHourly] = await Promise.all([
+      app().GetUsageSummary(rangeKey.value),
+      app().GetUsageDaily(rangeKey.value),
+      app().GetUsageHourlyToday(),
+    ])
+    // 后端空结果可能序列化为 null（nil slice → JSON null），统一兜底为数组，
+    // 避免 for..of null 抛错导致整页渲染中断。
+    rows.value = summary ?? []
+    daily.value = trend ?? []
+    hourly.value = trendHourly ?? []
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    toast(t('usage.loadFailed') + msg, 'error', 6000)
+  }
 }
 
 onMounted(refresh)

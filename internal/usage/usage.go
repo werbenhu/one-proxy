@@ -193,7 +193,8 @@ func (s *Store) Summary(since time.Time) ([]AggRow, error) {
 		return nil, fmt.Errorf("aggregate query: %w", err)
 	}
 	defer rows.Close()
-	var out []AggRow
+	// 显式初始化为空切片：nil slice 会序列化为 JSON null，前端 for..of null 会抛错。
+	var out []AggRow = []AggRow{}
 	for rows.Next() {
 		var r AggRow
 		if err := rows.Scan(&r.ChannelID, &r.ChannelName, &r.ModelRequested, &r.ModelUpstream,
@@ -369,6 +370,7 @@ func (s *Store) DailyByModel(since time.Time) ([]ModelDayTokens, error) {
 		return nil, fmt.Errorf("daily model usage query: %w", err)
 	}
 	defer rows.Close()
+	// 空切片而非 nil：避免 JSON null 让前端 for..of 抛错。
 	out := []ModelDayTokens{}
 	for rows.Next() {
 		var r ModelDayTokens
@@ -388,6 +390,7 @@ func (s *Store) HourlyByModel(since time.Time) ([]ModelHourTokens, error) {
 		return nil, fmt.Errorf("hourly model usage query: %w", err)
 	}
 	defer rows.Close()
+	// 空切片而非 nil：避免 JSON null 让前端 for..of 抛错。
 	out := []ModelHourTokens{}
 	for rows.Next() {
 		var r ModelHourTokens

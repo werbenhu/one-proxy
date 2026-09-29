@@ -193,6 +193,7 @@ declare global {
       GetProviderUsage(id: string): Promise<ProviderUsageView>
       StartGrokDeviceAuth(id: string): Promise<DeviceAuthInfo>
       CompleteGrokDeviceAuth(id: string, deviceCode: string): Promise<void>
+      Ping(): Promise<void>
     } } }
   }
 }

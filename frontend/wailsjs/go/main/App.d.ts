@@ -37,6 +37,8 @@ export function GetUsageSummary(arg1:string):Promise<Array<usage.AggRow>>;
 
 export function ImportProviders():Promise<string>;
 
+export function Ping():Promise<void>;
+
 export function ReorderProviders(arg1:Array<string>):Promise<void>;
 
 export function SaveChannel(arg1:config.Channel,arg2:string):Promise<void>;
