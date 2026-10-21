@@ -118,7 +118,7 @@ func Presets() []PresetView {
 			BaseURL: "https://api.commandcode.ai/provider/v1", Models: []string{}, DocsURL: "https://commandcode.ai/docs/provider"},
 		{Key: "commandcode-provider-anthropic", DisplayName: "Command Code（Anthropic）", Vendor: "commandcode", BalanceKind: "commandcode", Type: config.TypeAnthropicCompat,
 			BaseURL: "https://api.commandcode.ai/provider", Models: []string{}, DocsURL: "https://commandcode.ai/docs/provider"},
-		{Key: "ollama-cloud", DisplayName: "Ollama Cloud", Vendor: "ollama", Type: config.TypeOpenAICompat,
+		{Key: "ollama-cloud", DisplayName: "Ollama Cloud", Vendor: "ollama", BalanceKind: "ollama", Type: config.TypeOpenAICompat,
 			BaseURL: "https://ollama.com/v1", Models: []string{}, DocsURL: "https://docs.ollama.com/api/openai-compatibility"},
 		{Key: "grok", DisplayName: "Grok (xAI)", Vendor: "xai", Type: config.TypeGrok, BalanceKind: "grok",
 			BaseURL: "", Models: []string{"grok-4.5"}, DocsURL: "https://x.ai"},

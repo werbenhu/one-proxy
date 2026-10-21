@@ -233,6 +233,8 @@ func inferProviderMetadata(baseURL string) (vendor, balanceKind, balanceURL stri
 		return "deepseek", "deepseek", ""
 	case strings.Contains(host, "openrouter"):
 		return "openrouter", "openrouter", ""
+	case strings.Contains(host, "ollama.com"):
+		return "ollama", "ollama", ""
 	}
 	return "", "", ""
 }

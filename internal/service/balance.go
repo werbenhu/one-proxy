@@ -218,6 +218,8 @@ func balanceEndpoint(kind, custom, base string) (string, error) {
 		return "https://api.minimax.io/v1/api/openplatform/coding_plan/remains", nil
 	case "kimi-coding":
 		return "https://api.kimi.com/coding/v1/usages", nil
+	case "ollama":
+		return "https://ollama.com/api/balance", nil
 	case "moonshot":
 		u, err := url.Parse(base)
 		if err != nil || u.Scheme == "" || u.Host == "" {
@@ -257,6 +259,8 @@ func parseBalance(kind string, body []byte) (BalanceView, error) {
 				BalanceMetric{LabelKey: "quota.total", Value: "$" + formatNumber(*total)},
 				BalanceMetric{LabelKey: "quota.usedAmount", Value: "$" + formatNumber(*used)})
 		}
+	case "ollama":
+		parseOllamaBalance(&view, root)
 	case "moonshot":
 		data, _ := root["data"].(map[string]any)
 		for _, key := range []string{"available_balance", "cash_balance", "voucher_balance"} {
@@ -340,6 +344,60 @@ func parseBalance(kind string, body []byte) (BalanceView, error) {
 	}
 	return view, nil
 }
+
+// parseOllamaBalance 解析 Ollama Cloud 余额（GET https://ollama.com/api/balance）：
+// included 是随套餐周期重置的计划内额度，直接以「剩余 / 周期总额」文本展示（如 $59.92 / $60.00）；
+// purchased 只在没有任何计划内额度时兜底。旧版套餐返回 session 与 weekly 两个剩余百分比窗口
+// （remaining_percent 是剩余比例，统一换算成已用比例显示）。
+func parseOllamaBalance(view *BalanceView, root map[string]any) {
+	included, _ := root["included"].(map[string]any)
+	remaining, allowance := numberValue(included["balance_usd"]), numberValue(included["allowance_usd"])
+	if remaining != nil {
+		value := usdAmount(*remaining)
+		if allowance != nil && *allowance > 0 {
+			value += " / " + usdAmount(*allowance)
+		}
+		metric := BalanceMetric{LabelKey: "balance.included", Value: value}
+		if period, ok := included["period"].(map[string]any); ok {
+			metric.ResetAt = periodResetAt(period)
+		}
+		view.Summary = value
+		view.Details = append(view.Details, metric)
+	}
+	for _, pair := range []struct{ key, label string }{{"session", "window.session"}, {"weekly", "period.weekly"}} {
+		limit, _ := included[pair.key].(map[string]any)
+		remainingPercent := numberValue(limit["remaining_percent"])
+		if remainingPercent == nil {
+			continue
+		}
+		used := 100 - int(*remainingPercent+0.5)
+		used = min(max(used, 0), 100)
+		view.Details = append(view.Details, BalanceMetric{
+			LabelKey: pair.label, ValueKey: "usedPercent", ValueArgs: []string{strconv.Itoa(used)},
+			Percent: &used, ResetAt: resetTimeValue(limit),
+		})
+	}
+	if len(view.Details) == 0 {
+		if purchased, ok := root["purchased"].(map[string]any); ok {
+			if value := numberValue(purchased["balance_usd"]); value != nil {
+				view.Summary = usdAmount(*value)
+				view.Details = append(view.Details, BalanceMetric{LabelKey: "balance.purchased", Value: usdAmount(*value)})
+			}
+		}
+	}
+}
+
+// periodResetAt 取计划周期的结束时间（until 为排他的重置时刻）作为重置时间。
+func periodResetAt(period map[string]any) string {
+	until, _ := period["until"].(string)
+	if parsed, err := time.Parse(time.RFC3339, until); err == nil {
+		return parsed.Format(time.RFC3339)
+	}
+	return ""
+}
+
+// usdAmount 金额固定两位小数：72.5 → "$72.50"。
+func usdAmount(value float64) string { return "$" + strconv.FormatFloat(value, 'f', 2, 64) }
 
 // summaryText 为 summary 给一个语言中立的短文本（前端只在无 percent 明细时展示）。
 func summaryText(m BalanceMetric) string {
@@ -437,7 +495,7 @@ func appendWindowMetric(view *BalanceView, labelKey string, labelArgs []string, 
 // resetTimeValue 提取窗口重置时间并统一为 RFC3339：兼容 ISO 字符串（resetTime /
 // reset_at / nextResetTime）、epoch 秒或毫秒，以及 reset_in 秒数倒计时。
 func resetTimeValue(item map[string]any) string {
-	for _, key := range []string{"resetTime", "reset_at", "reset_time", "nextResetTime", "resetAt"} {
+	for _, key := range []string{"resetTime", "reset_at", "resets_at", "reset_time", "nextResetTime", "resetAt"} {
 		switch v := item[key].(type) {
 		case string:
 			if parsed, err := time.Parse(time.RFC3339, v); err == nil {

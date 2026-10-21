@@ -106,6 +106,66 @@ func TestParseKimiCodingUsageDetailWrapped(t *testing.T) {
 	}
 }
 
+func TestParseOllamaBalance(t *testing.T) {
+	view, err := parseBalance("ollama", []byte(`{
+		"included": {"balance_usd": 72.5, "allowance_usd": 100, "period": {"from": "2026-09-15T09:30:00Z", "until": "2026-10-15T09:30:00Z"}},
+		"purchased": {"balance_usd": 25}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Summary != "$72.50 / $100.00" || len(view.Details) != 1 {
+		t.Fatalf("unexpected Ollama balance: %+v", view)
+	}
+	included := view.Details[0]
+	if included.LabelKey != "balance.included" || included.Value != "$72.50 / $100.00" ||
+		included.Percent != nil || included.ResetAt != "2026-10-15T09:30:00Z" {
+		t.Fatalf("unexpected included metric: %+v", included)
+	}
+}
+
+func TestParseOllamaLegacyBalance(t *testing.T) {
+	view, err := parseBalance("ollama", []byte(`{
+		"included": {
+			"session": {"remaining_percent": 75, "resets_at": "2026-10-01T07:00:00Z"},
+			"weekly": {"remaining_percent": 40, "resets_at": "2026-10-05T00:00:00Z"}
+		},
+		"purchased": {"balance_usd": 25}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 购买余额不展示，旧套餐只保留 session / weekly 两个窗口
+	if len(view.Details) != 2 {
+		t.Fatalf("unexpected Ollama legacy balance: %+v", view)
+	}
+	session := view.Details[0]
+	if session.LabelKey != "window.session" || session.ValueKey != "usedPercent" || session.ValueArgs[0] != "25" ||
+		session.Percent == nil || *session.Percent != 25 || session.ResetAt != "2026-10-01T07:00:00Z" {
+		t.Fatalf("unexpected session metric: %+v", session)
+	}
+	weekly := view.Details[1]
+	if weekly.LabelKey != "period.weekly" || weekly.ValueArgs[0] != "60" || weekly.Percent == nil || *weekly.Percent != 60 {
+		t.Fatalf("unexpected weekly metric: %+v", weekly)
+	}
+}
+
+func TestParseOllamaPurchasedOnly(t *testing.T) {
+	view, err := parseBalance("ollama", []byte(`{"included":{},"purchased":{"balance_usd":25}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Summary != "$25.00" || len(view.Details) != 1 || view.Details[0].LabelKey != "balance.purchased" {
+		t.Fatalf("unexpected purchased-only balance: %+v", view)
+	}
+}
+
+func TestParseOllamaBalanceEmpty(t *testing.T) {
+	if _, err := parseBalance("ollama", []byte(`{"included":{},"purchased":{}}`)); err == nil {
+		t.Fatal("expected an error for a response without balances")
+	}
+}
+
 func TestParseCommandCodeCredits(t *testing.T) {
 	view, err := parseBalance("commandcode", []byte(`{"credits":{"monthlyCredits":69.5,"purchasedCredits":0,"freeCredits":0},"windowLimits":{"limited":true,"fiveHour":{"used":1.5,"cap":14},"weekly":{"used":1.5,"cap":35}}}`))
 	if err != nil {
