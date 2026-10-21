@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sync/atomic"
 
 	"github.com/energye/systray"
@@ -163,26 +164,46 @@ func (a *App) beforeClose(ctx context.Context) bool {
 	return true
 }
 
+// initSystray 启动系统托盘。
+//
+// 托盘图标和菜单依赖一个隐藏窗口：systray 在调用 Run 的 goroutine 所在的
+// 操作系统线程上创建该窗口，之后也只由这个线程用 GetMessage/DispatchMessage
+// 派发点击、右键等消息。而 Go 在 Windows 上每次系统调用（GetMessage、
+// DispatchMessage 都算）返回时都可能把 goroutine 挪到另一个操作系统线程
+// （见 runtime 源码："cgocall may reschedule us on to a different M"）。
+// 一旦托盘 goroutine 被挪走，隐藏窗口的消息队列就再也没人取：
+// 表现为图标仍然显示，但左键、右键点击都没有任何反应，且无法自愈。
+// 所以必须用 LockOSThread 把整个消息循环钉在同一个操作系统线程上。
 func (a *App) initSystray() {
-	go systray.Run(func() {
-		systray.SetIcon(trayIcon)
-		systray.SetTooltip("OneProxy")
-		systray.SetOnClick(func(systray.IMenu) { a.showMainWindow() })
-		mShow := systray.AddMenuItem("打开主界面", "")
-		systray.AddSeparator()
-		mQuit := systray.AddMenuItem("退出", "")
-		mShow.Click(func() { a.showMainWindow() })
-		mQuit.Click(func() {
-			a.quitting.Store(true)
-			systray.Quit()
-			runtime.Quit(a.ctx)
-		})
-	}, nil)
+	go func() {
+		goruntime.LockOSThread()
+		defer goruntime.UnlockOSThread()
+		systray.Run(func() {
+			systray.SetIcon(trayIcon)
+			systray.SetTooltip("OneProxy")
+			systray.SetOnClick(func(systray.IMenu) { a.showMainWindow() })
+			mShow := systray.AddMenuItem("打开主界面", "")
+			systray.AddSeparator()
+			mQuit := systray.AddMenuItem("退出", "")
+			mShow.Click(func() { a.showMainWindow() })
+			mQuit.Click(func() {
+				a.quitting.Store(true)
+				systray.Quit()
+				runtime.Quit(a.ctx)
+			})
+		}, nil)
+	}()
 }
 
+// showMainWindow 从托盘唤起主窗口。
+// WindowShow 自身已处理最小化恢复与前台激活，这里不再调用 WindowUnminimise：
+// 后者会把最大化的窗口还原成普通大小，反而改变用户原有的窗口状态。
 func (a *App) showMainWindow() {
-	runtime.WindowShow(a.ctx)
-	runtime.WindowUnminimise(a.ctx)
+	ctx := a.ctx
+	if ctx == nil {
+		return
+	}
+	runtime.WindowShow(ctx)
 }
 
 func (a *App) shutdown(ctx context.Context) { _ = a.server.Close() }
